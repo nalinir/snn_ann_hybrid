@@ -45,8 +45,7 @@ def main():
                 "value": 2e-3  # Keep learning rate constant for this sweep
             },
             "epochs": {
-                # 'value': 150 # Keep epochs constant for this sweep
-                "value": 1
+                "value": 40
             },
             "regularization": {"value": True},
             "optimizer": {"value": "Adam"},
@@ -62,7 +61,7 @@ def main():
         device = torch.device("cpu")
 
     data_name = "NMNIST"
-    train_loader, test_loader, val_loader = data_split_nmnist(data_config, device)
+    train_loader, test_loader, val_loader = data_split_nmnist(data_config)
     ## Regularization parameterization
 
     def train_wandb():
@@ -93,7 +92,7 @@ def main():
         else:
             sweep_config["parameters"]["recurrent"]["value"] = True
             # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize")
+            sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_NMNIST")
 
             # Run the sweep agent
             wandb.agent(
