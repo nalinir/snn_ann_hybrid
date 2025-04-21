@@ -1,0 +1,11 @@
+{
+    "nb_inputs": 1156,
+    "nb_hidden": 100,
+    "nb_outputs": 10,
+    "time_step": 0.001,
+    "nb_steps": 200,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005,
+    "batch_size": 20
+  }
+  
