@@ -61,7 +61,7 @@ def data_split_shd(config):
     train_indices, val_indices = train_test_split(
         list(range(len(train_subset))),
         test_size=0.5,
-        stratify=[train_dataset.targets[i] for i in train_subset.indices],
+        stratify=[train_dataset[i][1] for i in train_subset.indices],
         random_state=42,
     )
 
