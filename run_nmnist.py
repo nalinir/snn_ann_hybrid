@@ -79,7 +79,7 @@ def main():
             for i in [True, False]:
                 sweep_config["parameters"]["recurrent"]["value"] = i
                 # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize")
+                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_NMNIST")
 
                 # Run the sweep agent
                 wandb.agent(
