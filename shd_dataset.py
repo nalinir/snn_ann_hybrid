@@ -6,14 +6,16 @@ from data_utils import get_representative_subset_indices
 from sklearn.model_selection import train_test_split
 
 
-def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step):
+def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     """
-    Convert spike events into a binned spike train.
+    Convert spike events into a binned spike train with consideration for max_time.
 
     Args:
         spike_events: Structured NumPy array of spike events with fields ('x', 'y', 't', 'p').
         nb_steps: Number of time steps to bin the spikes into.
-        nb_units: Number of neurons (x * y resolution).
+        nb_units: Number of neurons (units).
+        time_step: The time resolution to scale spike times.
+        max_time: The maximum time value, defining the end of the time window for discretization.
 
     Returns:
         A binned spike train of shape (nb_steps, nb_units).
@@ -21,26 +23,24 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
 
     # Access each field of the structured array separately
-    x_coords = spike_events["x"]
     timestamps = spike_events["t"]
+    units_fired = spike_events["x"]  # Assuming 'x' stores the unit IDs
     polarities = spike_events["p"]
 
-    # Iterate through all events simultaneously
-    for x, t, p in zip(x_coords, timestamps, polarities):
-        time_bin = int(t * time_step)  # Convert time to timestep
-        if p == 1:  # On spikes only
-            if 0 <= time_bin < nb_steps:
-                # Calculate neuron ID with bounds checking
-                sqrt_units = int(np.sqrt(nb_units))
-                x = min(x, sqrt_units - 1)
-                neuron_id = x
-                spike_train[time_bin, neuron_id] = 1
+    # Iterate through all spike events
+    for t, unit, p in zip(timestamps, units_fired, polarities):
+        time_bin = int(t * time_step)
+
+        # Ensure the time_bin is within bounds
+        if 0 <= time_bin < nb_steps:  # Only for 'on' spikes (p == 1)
+            # Ensure that unit ID is within the valid neuron range
+            if 0 <= unit < nb_units:
+                spike_train[time_bin, unit] = 1.0  # Mark the spike for the corresponding unit and time step
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
-
 def data_split_shd(config):
-    train_limit = 200
+    train_limit = 400
     test_limit = train_limit
 
     train_dataset = tonic.datasets.SHD(
@@ -73,6 +73,7 @@ def data_split_shd(config):
                 nb_steps=config["nb_steps"],
                 nb_units=config["nb_inputs"],
                 time_step=config["time_step"],
+                max_time=config["max_time"],
             )
             for i in train_indices
         ]
@@ -91,6 +92,7 @@ def data_split_shd(config):
                 nb_steps=config["nb_steps"],
                 nb_units=config["nb_inputs"],
                 time_step=config["time_step"],
+                max_time=config["max_time"],
             )
             for i in val_indices
         ]
@@ -108,6 +110,7 @@ def data_split_shd(config):
                 nb_steps=config["nb_steps"],
                 nb_units=config["nb_inputs"],
                 time_step=config["time_step"],
+                max_time=config["max_time"],
             )
             for i in range(len(test_subset))
         ]
