@@ -39,12 +39,12 @@ def main():
         "name": "SNN Regularization Sweep",
         "metric": {"name": "val_accuracy", "goal": "maximize"},
         "parameters": {
-            "l1": {"values": [1e-6, 5e-6, 1e-5]},
-            "l2": {"values": [1e-6, 5e-6, 1e-5]},
+            "l1": {"values": [1e-6, 2e-6, 5e-6]},
+            "l2": {"values": [1e-6, 2e-6, 5e-6]},
             "learning_rate": {
-                "value": 2e-3  # Keep learning rate constant for this sweep
+                "value": 2e-4  # Keep learning rate constant for this sweep
             },
-            "epochs": {"value": 1},
+            "epochs": {"value": 40},
             "regularization": {"value": True},
             "optimizer": {"value": "Adam"},
             "model_name": {"value": "SNN"},
@@ -79,7 +79,7 @@ def main():
             for i in [True, False]:
                 sweep_config["parameters"]["recurrent"]["value"] = i
                 # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize")
+                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_shd")
 
                 # Run the sweep agent
                 wandb.agent(
