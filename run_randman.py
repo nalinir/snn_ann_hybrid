@@ -31,16 +31,13 @@ def main():
     )
     args = parser.parse_args()
 
-    with open(args.data_config_path, "r") as f:
-        data_config = json.load(f)
-
     sweep_config = {
         "method": "grid",
         "name": "SNN Regularization Sweep",
         "metric": {"name": "val_accuracy", "goal": "maximize"},
         "parameters": {
-            "l1": {"values": [1e-6, 5e-6, 1e-5]},
-            "l2": {"values": [1e-6, 5e-6, 1e-5]},
+            "l1": {"values": [0, 1e-6, 1e-5]},
+            "l2": {"values": [0, 1e-6, 1e-5]},
             "learning_rate": {
                 "value": 2e-3  # Keep learning rate constant for this sweep
             },
@@ -50,6 +47,7 @@ def main():
             "model_name": {"value": "SNN"},
             "recurrent": {"value": True},
         },
+        "data": "randman",
     }
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -58,14 +56,13 @@ def main():
     else:
         device = torch.device("cpu")
 
-    data_name = "Randman"
     train_loader, test_loader, val_loader = data_split_randman(data_config, device)
     ## Regularization parameterization
 
     def train_wandb():
         with wandb.init() as run:
             config = wandb.config
-            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-{data_name}-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
+            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-{config['data']}-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
             model = function_mappings[config.model_name]
             train_and_val(
                 model, train_loader, val_loader, test_loader, run, data_config, device
@@ -90,7 +87,7 @@ def main():
         else:
             sweep_config["parameters"]["recurrent"]["value"] = True
             # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize")
+            sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_{config['data']}")
 
             # Run the sweep agent
             wandb.agent(
