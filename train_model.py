@@ -183,7 +183,7 @@ def train_and_val(
                     )
 
     # Evaluation after training loop
-    train_accuracy, train_conf_matrix, _ = compute_classification_accuracy(
+    train_accuracy, train_conf_matrix, train_spike_ct = compute_classification_accuracy(
         train_loader,
         w1,
         w2,
@@ -197,7 +197,7 @@ def train_and_val(
         config,
         model,
     )
-    test_accuracy, test_conf_matrix, _ = compute_classification_accuracy(
+    test_accuracy, test_conf_matrix, test_spike_ct = compute_classification_accuracy(
         test_loader,
         w1,
         w2,
@@ -211,7 +211,7 @@ def train_and_val(
         config,
         model,
     )
-    val_accuracy_final, val_conf_matrix, _ = compute_classification_accuracy(
+    val_accuracy_final, val_conf_matrix, val_spike_ct = compute_classification_accuracy(
         val_loader,
         w1,
         w2,
@@ -236,10 +236,13 @@ def train_and_val(
                 "final_train_accuracy": train_accuracy,
                 "final_test_accuracy": test_accuracy,
                 "final_val_accuracy": val_accuracy,
+                "final_train_spike_ct": train_spike_ct,
+                "final_test_spike_ct": test_spike_ct,
+                "final_val_spike_ct": val_spike_ct,
             }
         )
 
-    return val_accuracy  # For training sweeps
+    # return val_accuracy  # For training sweeps
 
 
 def compute_classification_accuracy(
