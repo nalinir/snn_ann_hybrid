@@ -58,7 +58,7 @@ def main():
     else:
         device = torch.device("cpu")
 
-    data_name = "NMNIST"
+    data_name = "NMNIST" ## MAKE SURE TO SAVE THIS AS A PARAMETER EVENTUALLY
     train_loader, test_loader, val_loader = data_split_nmnist(data_config)
     ## Regularization parameterization
 
