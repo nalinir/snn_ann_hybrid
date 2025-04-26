@@ -5,6 +5,47 @@ from sklearn.metrics import confusion_matrix
 
 from surrogate_gradient import SurrGradSpike
 
+def bound_regularizer(spk, v_t, l, l1=False, upper_bound=True, population_level=True):
+    multiplier = 1 if upper_bound else -1
+    cnt = torch.sum(spk, dim=0)
+    if population_level:
+        cnt = torch.mean(spk, dim=0)
+    reg = torch.relu(multiplier*(cnt - v_t))
+    if l1:
+        reg_loss = l * torch.mean(torch.abs(reg))
+    else:
+        reg_loss = l * torch.mean(torch.square(reg))
+    return reg_loss
+
+def regularization_loss_original(
+    spks,
+    l1,
+    l2,
+):
+    """
+    Computes the regularization loss based on the spikes.
+    """
+    reg_loss = l1 * torch.sum(spks)
+    reg_loss += l2 * torch.mean(torch.sum(torch.sum(spks, dim=0), dim=0) ** 2)
+    return reg_loss
+
+def regularization_loss_zenke_actual(
+    spks,
+    l1_upper,
+    v1_upper,
+    l2_upper,
+    v2_upper,
+    l_lower=100,
+    v_lower=10e-3,
+):
+    """
+    Computes the regularization loss based on the spikes.
+    """
+    lower_bound_l2 = bound_regularizer(spks, v_lower, l_lower, l1=False, upper_bound=False, population_level=False)
+    upper_bound_l1 = bound_regularizer(spks, v1_upper, l1_upper, l1=True)
+    upper_bound_l2 = bound_regularizer(spks, v2_upper, l2_upper, l1=False)
+    return lower_bound_l2 + upper_bound_l1 + upper_bound_l2
+}
 
 def train_and_val(
     model,
@@ -21,6 +62,7 @@ def train_and_val(
     l2 = config.l2
     epochs = config.epochs
     regularization = config.regularization
+    regularization_type = config.regularization_type
 
     w1 = torch.empty(
         (data_config["nb_inputs"], data_config["nb_hidden"]),
@@ -100,12 +142,25 @@ def train_and_val(
 
             if regularization:
                 spks = other_recs_train[1]
-                reg_loss = l1 * torch.sum(spks)
-                reg_loss += l2 * torch.mean(
-                    torch.sum(torch.sum(spks, dim=0), dim=0) ** 2
-                )
-                loss_val_train += reg_loss
-                spike_count_train_epoch += torch.sum(spks >= 1.0)
+                spks[spks > 0.0] = 1.0
+                spks[spks < 0.0] = 0.0
+                if regularization_type == "regularization_loss_zenke_actual":
+                    loss_val_train += regularization_loss_zenke_actual(
+                        spks,
+                        l2_lower=config.l2_lower,
+                        v2_lower=config.v2_lower,
+                        l1_upper=config.l1_upper,
+                        v1_upper=config.v1_upper,
+                        l2_upper=config.l2_upper,
+                        v2_upper=config.v2_upper,
+                    )
+                else:
+                    loss_val_train += regularization_loss_original(
+                        spks,
+                        l1=config.l1,
+                        l2=config.l2,
+                    )
+                spike_count_train_epoch += torch.sum(spks).detach().cpu().numpy()
 
             optimizer.zero_grad()
             loss_val_train.backward()
