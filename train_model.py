@@ -5,7 +5,7 @@ from sklearn.metrics import confusion_matrix
 
 from surrogate_gradient import SurrGradSpike
 
-def bound_regularizer(spk, v_t, l, l1=False, upper_bound=True, population_level=True):
+def bound_regularizer(spk, v_t, l, l1, upper_bound=True, population_level=True):
     multiplier = 1 if upper_bound else -1
     cnt = torch.sum(spk, dim=0)
     if population_level:
@@ -18,34 +18,27 @@ def bound_regularizer(spk, v_t, l, l1=False, upper_bound=True, population_level=
     return reg_loss
 
 def regularization_loss_original(
-    spks,
-    l1,
-    l2,
+    spks, config
 ):
     """
     Computes the regularization loss based on the spikes.
     """
-    reg_loss = l1 * torch.sum(spks)
-    reg_loss += l2 * torch.mean(torch.sum(torch.sum(spks, dim=0), dim=0) ** 2)
+    reg_loss = config['l1'] * torch.sum(spks)
+    reg_loss += config['l2'] * torch.mean(torch.sum(torch.sum(spks, dim=0), dim=0) ** 2)
     return reg_loss
 
 def regularization_loss_zenke_actual(
     spks,
-    l1_upper,
-    v1_upper,
-    l2_upper,
-    v2_upper,
-    l_lower=100,
-    v_lower=10e-3,
+    config
 ):
     """
     Computes the regularization loss based on the spikes.
     """
-    lower_bound_l2 = bound_regularizer(spks, v_lower, l_lower, l1=False, upper_bound=False, population_level=False)
-    upper_bound_l1 = bound_regularizer(spks, v1_upper, l1_upper, l1=True)
-    upper_bound_l2 = bound_regularizer(spks, v2_upper, l2_upper, l1=False)
+    lower_bound_l2 = bound_regularizer(spks, config['v2_lower'], config['l2_lower'], l1=False, upper_bound=False, population_level=False)
+    upper_bound_l1 = bound_regularizer(spks, config['v1_upper'], config['l1_upper'], l1=True)
+    upper_bound_l2 = bound_regularizer(spks, config['v2_upper'], config['l2_upper'], l1=False)
     return lower_bound_l2 + upper_bound_l1 + upper_bound_l2
-}
+
 
 def train_and_val(
     model,
@@ -55,14 +48,15 @@ def train_and_val(
     wandb_run,
     data_config,
     device,
+    trial,
+    config
 ):
-    config = wandb_run.config
-    lr = config.learning_rate
-    l1 = config.l1
-    l2 = config.l2
-    epochs = config.epochs
-    regularization = config.regularization
-    regularization_type = config.regularization_type
+    if hasattr(wandb_run, 'config'):
+        config = wandb_run.config
+    lr = config["learning_rate"]
+    epochs = config["epochs"]
+    regularization = config['regularization']
+    zenke_actual = config['zenke_actual']
 
     w1 = torch.empty(
         (data_config["nb_inputs"], data_config["nb_hidden"]),
@@ -133,7 +127,7 @@ def train_and_val(
                 beta,
                 spike_fn,
                 device,
-                config.recurrent,
+                config['recurrent'],
                 snn_mask,
             )
             m, _ = torch.max(output_train, 1)
@@ -141,25 +135,13 @@ def train_and_val(
             loss_val_train = loss_fn(log_p_y_train, y_local)
 
             if regularization:
-                spks = other_recs_train[1]
+                spks = other_recs_train[1].detach().clone()
                 spks[spks > 0.0] = 1.0
                 spks[spks < 0.0] = 0.0
-                if regularization_type == "regularization_loss_zenke_actual":
-                    loss_val_train += regularization_loss_zenke_actual(
-                        spks,
-                        l2_lower=config.l2_lower,
-                        v2_lower=config.v2_lower,
-                        l1_upper=config.l1_upper,
-                        v1_upper=config.v1_upper,
-                        l2_upper=config.l2_upper,
-                        v2_upper=config.v2_upper,
-                    )
+                if zenke_actual:
+                    loss_val_train += regularization_loss_zenke_actual(spks, config)
                 else:
-                    loss_val_train += regularization_loss_original(
-                        spks,
-                        l1=config.l1,
-                        l2=config.l2,
-                    )
+                    loss_val_train += regularization_loss_original(spks, config)
                 spike_count_train_epoch += torch.sum(spks).detach().cpu().numpy()
 
             optimizer.zero_grad()
@@ -185,7 +167,7 @@ def train_and_val(
                     beta,
                     spike_fn,
                     device,
-                    config.recurrent,
+                    config['recurrent'],
                     snn_mask,
                 )
                 m, _ = torch.max(output_val, 1)
@@ -290,14 +272,14 @@ def train_and_val(
             {
                 "final_train_accuracy": train_accuracy,
                 "final_test_accuracy": test_accuracy,
-                "final_val_accuracy": val_accuracy,
+                "final_val_accuracy": val_accuracy_final,
                 "final_train_spike_ct": train_spike_ct,
                 "final_test_spike_ct": test_spike_ct,
                 "final_val_spike_ct": val_spike_ct,
             }
         )
 
-    # return val_accuracy  # For training sweeps
+    return val_accuracy_final
 
 
 def compute_classification_accuracy(
@@ -338,11 +320,11 @@ def compute_classification_accuracy(
             beta,
             spike_fn,
             device,
-            config.recurrent,
+            config['recurrent'],
             snn_mask,
         )
         m, _ = torch.max(output, 1)
-        if "Hybrid" or "SNN" in model.__name__:
+        if "Hybrid" in model.__name__ or "SNN" in model.__name__:
             spks = recs[1]
             spks[spks > 0.0] = 1.0
             spks[spks < 0.0] = 0.0

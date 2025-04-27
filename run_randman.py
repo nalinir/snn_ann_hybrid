@@ -31,6 +31,9 @@ def main():
     )
     args = parser.parse_args()
 
+    with open(args.data_config_path, "r") as f:
+        data_config = json.load(f)
+
     sweep_config = {
         "method": "grid",
         "name": "SNN Regularization Sweep",
@@ -47,7 +50,6 @@ def main():
             "model_name": {"value": "SNN"},
             "recurrent": {"value": True},
         },
-        "data": "randman",
     }
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -62,7 +64,7 @@ def main():
     def train_wandb():
         with wandb.init() as run:
             config = wandb.config
-            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-{config['data']}-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
+            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-randman-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
             model = function_mappings[config.model_name]
             train_and_val(
                 model, train_loader, val_loader, test_loader, run, data_config, device
@@ -76,7 +78,7 @@ def main():
             for i in [True, False]:
                 sweep_config["parameters"]["recurrent"]["value"] = i
                 # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize")
+                sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_randman_2")
 
                 # Run the sweep agent
                 wandb.agent(
@@ -87,7 +89,7 @@ def main():
         else:
             sweep_config["parameters"]["recurrent"]["value"] = True
             # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_{config['data']}")
+            sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_randman_2")
 
             # Run the sweep agent
             wandb.agent(
