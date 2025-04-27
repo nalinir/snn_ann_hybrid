@@ -164,9 +164,10 @@ def Hybrid_RNN_SNN_rec(
         spk_rec.append(out_snn)
 
         # ANN neurons - don't interact with the synaptic input at all to start
-        out_ann = torch.tanh(h1_ann[:, t])
+        layer_weights = h1_ann[:, t]
         if recurrent:
-            out_ann += torch.einsum("ab,bc->ac", (out_ann, v1))
+            layer_weights += torch.einsum("ab,bc->ac", (out_ann, v1))
+        out_ann = torch.tanh(layer_weights)
         ann_rec.append(out_ann)
 
         mem = new_mem
@@ -251,7 +252,8 @@ def Hybrid_RNN_SNN_V1_same_layer(
         spk_rec.append(out_snn)
 
         # ANN neurons - don't interact with the synaptic input at all to start
-        out_ann = torch.tanh(h1_ann[:, t]) + torch.einsum("ab,bc->ac", (out, v1))
+        layer_weights = h1_ann[:, t] + torch.einsum("ab,bc->ac", (out, v1))
+        out_ann = torch.tanh(layer_weights)
         ann_rec.append(out_ann)
 
         mem = new_mem
