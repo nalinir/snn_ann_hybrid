@@ -12,7 +12,7 @@ import wandb
 import argparse
 
 function_mappings = {
-    "SNN": SNN,
+    # "SNN": SNN,
     "ANN_with_LIF_output": ANN_with_LIF_output,
     "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
@@ -39,12 +39,12 @@ def main():
         "name": "SNN Regularization Sweep",
         "metric": {"name": "val_accuracy", "goal": "maximize"},
         "parameters": {
-            "l1": {"values": [1e-6, 5e-6, 1e-5]},
-            "l2": {"values": [1e-6, 5e-6, 1e-5]},
+            "l1": {"values": [0, 1e-6, 1e-5]},
+            "l2": {"values": [0, 1e-6, 1e-5]},
             "learning_rate": {
                 "value": 2e-3  # Keep learning rate constant for this sweep
             },
-            "epochs": {"value": 40},
+            "epochs": {"value": 150},  # Keep epochs constant for this sweep
             "regularization": {"value": True},
             "optimizer": {"value": "Adam"},
             "model_name": {"value": "SNN"},
@@ -58,14 +58,13 @@ def main():
     else:
         device = torch.device("cpu")
 
-    data_name = "NMNIST" ## MAKE SURE TO SAVE THIS AS A PARAMETER EVENTUALLY
     train_loader, test_loader, val_loader = data_split_nmnist(data_config)
     ## Regularization parameterization
 
     def train_wandb():
         with wandb.init() as run:
             config = wandb.config
-            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-{data_name}-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
+            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-nmnist-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
             model = function_mappings[config.model_name]
             train_and_val(
                 model, train_loader, val_loader, test_loader, run, data_config, device
@@ -79,7 +78,7 @@ def main():
             for i in [True, False]:
                 sweep_config["parameters"]["recurrent"]["value"] = i
                 # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_NMNIST")
+                sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_nmnist_v2")
 
                 # Run the sweep agent
                 wandb.agent(
@@ -90,7 +89,7 @@ def main():
         else:
             sweep_config["parameters"]["recurrent"]["value"] = True
             # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_NMNIST")
+            sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_nmnist_v2")
 
             # Run the sweep agent
             wandb.agent(
@@ -99,7 +98,7 @@ def main():
                 count=9,
             )  # Run all 3 x 3 combinations
 
-    ## Later -> Initialization parameterization with the loss function (using data_split_randman)
+    ## Later -> Initialization parameterization with the loss function (using data_split_nmnist)
 
 
 if __name__ == "__main__":

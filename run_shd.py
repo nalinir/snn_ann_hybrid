@@ -42,7 +42,7 @@ def main():
             "l1": {"values": [1e-6, 2e-6, 5e-6]},
             "l2": {"values": [1e-6, 2e-6, 5e-6]},
             "learning_rate": {
-                "value": 2e-4  # Keep learning rate constant for this sweep
+                "value": 2e-5  # Keep learning rate constant for this sweep
             },
             "epochs": {"value": 40},
             "regularization": {"value": True},
