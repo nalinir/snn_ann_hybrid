@@ -60,13 +60,8 @@ def regularization_loss_original(spks, config):
 
 
 # --- Core Training/Evaluation Functions ---
-def run_epoch(model, data_loader, weights, device, config, data_config, mode='train', optimizer=None):
-    """
-    Runs one epoch. Returns:
-      avg_loss, accuracy,
-      per_timestep_spikes (np.array), total_spikes (int),
-      voltage_tensors (list of recs[0]), spike_tensors (list of recs[1]), recurrent_tensors (list of recs[3]).
-    """
+# --- Core Training/Evaluation Functions ---
+def run_epoch(model, data_loader, weights, device, config, data_config, mode='train', optimizer=None, save_spikes=False, save_voltages=False):
     w1, w2, v1 = weights
     alpha = float(np.exp(-data_config['time_step'] / data_config['tau_syn']))
     beta = float(np.exp(-data_config['time_step'] / data_config['tau_mem']))
@@ -74,36 +69,32 @@ def run_epoch(model, data_loader, weights, device, config, data_config, mode='tr
     log_softmax = nn.LogSoftmax(dim=1)
     loss_fn = nn.NLLLoss()
 
-    # if mode == 'train':
-    #     model.train()
-        # optimizer = torch.optim.Adam(weights, lr=config['learning_rate'])
-    # else:
-    #     model.eval()
-
     total_loss = 0.0
     all_preds, all_labels = [], []
     per_timestep_spike_counts = []
     total_spikes = 0
-    voltage_tensors, spike_tensors, recurrent_tensors = [], [], []
+    spike_tensors = [] if save_spikes else None
+    voltage_tensors = [] if save_voltages else None
+
+    snn_mask = torch.zeros((data_config['nb_hidden'],), device=device)
+    snn_mask[:data_config['nb_hidden'] // 2] = 1.0
 
     for x, y in data_loader:
         x, y = x.to(device), y.to(device)
-        output, recs = model(x, w1, w2, v1, alpha, beta, spike_fn, device, config['recurrent'], None)
+        output, recs = model(x, w1, w2, v1, alpha, beta, spike_fn, device, config['recurrent'], snn_mask)
+        
         if model == ANN_with_LIF_output:
-            rec_out = recs[0]
-            volt = None
-            spks = None
+            volt, spks = None, None
         elif model == SNN:
             volt, spks = recs[0], recs[1]
-            rec_out = None
         else:
-            volt, spks = recs[0], recs[1], recs[2]
+            volt, spks = recs[0], recs[1]
 
         # compute loss
         m, _ = torch.max(output, dim=1)
         logp = log_softmax(m)
         loss = loss_fn(logp, y)
-        if config.get('regularization', False):
+        if config.get('regularization', False) and model != ANN_with_LIF_output:
             bin_spks = (spks > 0).float()
             loss += (regularization_loss_zenke(bin_spks, config)
                      if config.get('zenke_actual', False)
@@ -112,12 +103,10 @@ def run_epoch(model, data_loader, weights, device, config, data_config, mode='tr
         # track metrics
         per_timestep_spike_counts.append(neurons_spiking_per_timestep(spks))
         total_spikes += total_spike_count(spks)
-        if volt != None:
-            voltage_tensors.append(volt.detach().cpu())
-        if spks != None:
+        if save_spikes and spks is not None:
             spike_tensors.append(spks.detach().cpu())
-        if rec_out != None:
-            recurrent_tensors.append(rec_out.detach().cpu())
+        if save_voltages and volt is not None:
+            voltage_tensors.append(volt.detach().cpu())
 
         if mode == 'train':
             optimizer.zero_grad()
@@ -133,11 +122,10 @@ def run_epoch(model, data_loader, weights, device, config, data_config, mode='tr
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))
     per_timestep_spike_counts = np.concatenate(per_timestep_spike_counts)
 
-    return avg_loss, accuracy, per_timestep_spike_counts, total_spikes, voltage_tensors, spike_tensors, recurrent_tensors
+    return avg_loss, accuracy, per_timestep_spike_counts, total_spikes, spike_tensors, voltage_tensors
 
 
 def train_and_evaluate(model, train_loader, val_loader, test_loader, config, data_config, device, wandb_run=None):
-    # weight init
     def init_weight(shape):
         t = torch.empty(shape, device=device, requires_grad=True)
         nn.init.normal_(t, mean=0.0, std=1.0)
@@ -147,62 +135,50 @@ def train_and_evaluate(model, train_loader, val_loader, test_loader, config, dat
     w2 = init_weight((data_config['nb_hidden'], data_config['nb_outputs']))
     v1 = init_weight((data_config['nb_hidden'], data_config['nb_hidden']))
 
-    history = {k: [] for k in ['train', 'val']}
-    for split in ['train', 'val']:
-        history[split] = {
-            'loss': [], 'acc': [], 'spikes_per_t': [], 'total_spikes': [],
-            'voltage_tensors': [], 'spike_tensors': [], 'recurrent_tensors': []
-        }
-    history['test'] = {**history['train']}
+    history = {split: {'loss': [], 'acc': [], 'spikes_per_t': [], 'total_spikes': []} for split in ['train', 'val']}
+    history['test'] = {**history['train'], 'spike_tensors': None, 'voltage_tensors': None}
     optimizer = torch.optim.Adam([w1, w2, v1], lr=config['learning_rate'])
 
     for epoch in range(config['epochs']):
         t_metrics = run_epoch(model, train_loader, (w1, w2, v1), device, config, data_config, mode='train', optimizer=optimizer)
         v_metrics = run_epoch(model, val_loader,   (w1, w2, v1), device, config, data_config, mode='eval')
 
-        for split, metrics in zip(['train','val'], [t_metrics, v_metrics]):
+        for split, metrics in zip(['train', 'val'], [t_metrics, v_metrics]):
             history[split]['loss'].append(metrics[0])
             history[split]['acc'].append(metrics[1])
             history[split]['spikes_per_t'].append(metrics[2])
             history[split]['total_spikes'].append(metrics[3])
-            history[split]['voltage_tensors'].append(metrics[4])
-            history[split]['spike_tensors'].append(metrics[5])
-            history[split]['recurrent_tensors'].append(metrics[6])
             if wandb_run:
                 wandb_run.log({
                     f"{split}_loss": metrics[0],
                     f"{split}_acc": metrics[1],
-                    f"{split}_spikes_per_t": metrics[2],
+                    f"{split}_spikes_per_t": np.mean(metrics[2]),
                     f"{split}_total_spikes": metrics[3],
                 })
+        
+        torch.cuda.empty_cache()
 
-    # test
-    test_metrics = run_epoch(model, test_loader, (w1, w2, v1), device, config, data_config, mode='eval')
-    for key, val in zip(['loss','acc','spikes_per_t','total_spikes','voltage_tensors','spike_tensors','recurrent_tensors'], test_metrics):
-        history['test'][key] = val
-
-    # if wandb_run:
-    #     # Save full history as a pickle file
-    #     save_path = "history.pkl"
-    #     with open(save_path, "wb") as f:
-    #         pickle.dump(history, f)
-
-    #     # Create W&B artifact and log the file
-    #     artifact = wandb.Artifact("full_training_history", type="results")
-    #     artifact.add_file(save_path)
-    #     wandb_run.log_artifact(artifact)
-
-    #     # Optional: cleanup local file
-    #     os.remove(save_path)
+    # Final Test
+    test_loss, test_acc, test_spikes_per_t, test_total_spikes, test_spike_tensors, test_voltage_tensors = run_epoch(
+        model, test_loader, (w1, w2, v1), device, config, data_config, mode='eval', save_spikes=True, save_voltages=True
+    )
+    history['test']['loss'] = test_loss
+    history['test']['acc'] = test_acc
+    history['test']['spikes_per_t'] = test_spikes_per_t
+    history['test']['total_spikes'] = test_total_spikes
+    history['test']['spike_tensors'] = test_spike_tensors
+    history['test']['voltage_tensors'] = test_voltage_tensors
 
     print(f"Train Acc: {history['train']['acc'][-1]*100:.2f}%, Val Acc: {history['val']['acc'][-1]*100:.2f}%, Test Acc: {history['test']['acc']*100:.2f}%")
-    wandb_run.log({
-        "final_train_acc": history['train']['acc'][-1],
-        "final_val_acc": history['val']['acc'][-1],
-        "final_test_acc": history['test']['acc'],
-    })
+    if wandb_run:
+        wandb_run.log({
+            "final_train_acc": history['train']['acc'][-1],
+            "final_val_acc": history['val']['acc'][-1],
+            "final_test_acc": history['test']['acc'],
+        })
 
-    return history
+    return history, w1, w2, v1
+
 
 def objective(trial, model_name, data_config, device, train_loader, val_loader, test_loader, recurrent_setting, project_name):
     # Use original distribution styles from the WandB sweep config
@@ -232,7 +208,7 @@ def objective(trial, model_name, data_config, device, train_loader, val_loader, 
 
     with wandb.init(project=project_name, config=config, name=run_name):
         model_class = function_mappings[model_name]
-        history = train_and_evaluate(
+        history, w1, w2, v1 = train_and_evaluate(
             model_class,
             train_loader,
             val_loader,
@@ -247,5 +223,5 @@ def objective(trial, model_name, data_config, device, train_loader, val_loader, 
 
     # Save history if it's better
     trial.set_user_attr("history", history)  # store the history inside the trial for later if needed
-
+    trial.set_user_attr("weights", (w1, w2, v1))  # store the weights inside the trial for later if needed
     return final_val_acc
