@@ -286,3 +286,75 @@ def Hybrid_RNN_SNN_V1_same_layer(
     out_rec = torch.stack(out_rec, dim=1)
     other_recs = [mem_rec, spk_rec, ann_rec]
     return out_rec, other_recs
+
+def Hybrid_RNN_SNN_V1_same_layer_attn(
+    inputs, w1, w2, v1, alpha, beta, spike_fn,
+    device, recurrent, snn_mask,
+    num_heads: int = 4               
+):
+    inputs = inputs.to(device)
+    B, T, _ = inputs.shape
+    H       = w1.shape[1]             
+
+    h1  = torch.einsum("bti,ih->bth", inputs, w1)
+    h1_ann      = h1 * (1.0 - snn_mask)   
+    h1_snn_inp  = h1 * snn_mask         
+
+    syn = torch.zeros(B, H, device=device)
+    mem = torch.zeros_like(syn)
+
+    out_ann = torch.zeros_like(syn)
+    out_snn = torch.zeros_like(syn)
+
+    mem_rec, spk_rec, ann_rec = [], [], []
+
+    attn = nn.MultiheadAttention(
+                embed_dim=H,
+                num_heads=num_heads,
+                batch_first=True,
+                bias=False                
+           ).to(device)
+
+    for t in range(T):
+        out_mix = out_ann + out_snn                       
+
+        h1_snn = h1_snn_inp[:, t] + torch.matmul(out_mix, v1)
+
+        q = out_snn.unsqueeze(1)       
+        k = v = out_ann.unsqueeze(1)    
+        attn_out, _ = attn(q, k, v)     
+        h1_snn = h1_snn + attn_out.squeeze(1)
+
+        mem = mem * snn_mask
+        syn = syn * snn_mask
+
+        z_thr   = spike_fn(mem - 1.0)      
+        rst     = z_thr.detach()
+        syn     = alpha * syn + h1_snn
+        mem     = (beta * mem + syn) * (1.0 - rst)
+        out_snn = z_thr
+
+        out_ann = torch.tanh(h1_ann[:, t]) + torch.matmul(out_mix, v1)
+
+        mem_rec.append(mem)
+        spk_rec.append(out_snn)
+        ann_rec.append(out_ann)
+
+    mem_rec = torch.stack(mem_rec, 1)      
+    spk_rec = torch.stack(spk_rec, 1)
+    ann_rec = torch.stack(ann_rec, 1)
+
+    h2  = (torch.einsum("bth,ho->bto", spk_rec, w2) +
+           torch.einsum("bth,ho->bto", ann_rec,  w2))
+
+    flt = torch.zeros(B, w2.shape[1], device=device)
+    out = torch.zeros_like(flt)
+    out_rec = [out]
+
+    for t in range(T):
+        flt = alpha * flt + h2[:, t]
+        out = beta  * out + flt
+        out_rec.append(out)
+
+    out_rec = torch.stack(out_rec, 1)
+    return out_rec, [mem_rec, spk_rec, ann_rec]

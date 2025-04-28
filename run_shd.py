@@ -5,6 +5,7 @@ from models import (
     ANN_with_LIF_output,
     Hybrid_RNN_SNN_rec,
     Hybrid_RNN_SNN_V1_same_layer,
+    Hybrid_RNN_SNN_V1_same_layer_attn
 )
 from train_model import train_and_val
 import json
@@ -16,8 +17,9 @@ function_mappings = {
     "ANN_with_LIF_output": ANN_with_LIF_output,
     "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
+    "Hybrid_RNN_SNN_V1_same_layer_attn": Hybrid_RNN_SNN_V1_same_layer_attn,
+    ""
 }
-
 
 def main():
     parser = argparse.ArgumentParser(
