@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn as nn
 
 def SNN(inputs, w1, w2, v1, alpha, beta, spike_fn, device, recurrent, snn_mask):
     inputs = inputs.to(device)
