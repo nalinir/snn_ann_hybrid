@@ -68,7 +68,7 @@ def main():
                     # save_dir,
                 )
 
-            study.optimize(wrapped_objective, n_trials=1)
+            study.optimize(wrapped_objective, n_trials=20)
 
             best_trial = study.best_trial
             print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
