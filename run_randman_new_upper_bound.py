@@ -44,7 +44,7 @@ def main():
     for model_name in models:
         best_val_acc = -np.inf
         best_history = None
-
+        best_config = None
         allowed_recurrents = [True, False]
         if model_name == "Hybrid_RNN_SNN_V1_same_layer":
             allowed_recurrents = [True]
@@ -68,7 +68,7 @@ def main():
                     # save_dir,
                 )
 
-            study.optimize(wrapped_objective, n_trials=20)
+            study.optimize(wrapped_objective, n_trials=1)
 
             best_trial = study.best_trial
             print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
@@ -78,6 +78,7 @@ def main():
                 print(f"New best for {model_name} with val acc {best_trial.value:.4f}")
                 best_val_acc = best_trial.value
                 best_history = best_trial.user_attrs["history"]
+                best_weights = best_trial.user_attrs["weights"]
                 print(f"Best trial user attributes: {best_trial.user_attrs}")
                 best_config = {
                     "model_name": model_name,
@@ -85,27 +86,31 @@ def main():
                     **best_trial.params,
                     "best_val_acc": best_val_acc
                 }
-            save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results"
+            save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman"
             os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
             # After finishing allowed recurrents for this model
-            if best_history is not None:
-                path = os.path.join(save_dir, f"{model_name}_best.pkl")
-                try:
-                    with open(path, "wb") as f:
-                        pickle.dump(best_history, f)
-                    print(f"Saved best model for {model_name} at {path}")
-                except PermissionError:
-                    print(f"Permission denied for {path}")
-                except Exception as e:
-                    print(f"Error saving {path}: {str(e)}")
+            model_name_adj = model_name + f"_rec_{recurrent_setting}"
+            if best_history and best_config:
+                model_save_dir = os.path.join(save_dir, model_name_adj)
+                os.makedirs(model_save_dir, exist_ok=True)
 
-                # Also save the config file for the best run
-                if best_config is not None:
-                    config_path = os.path.join(save_dir, f"{model_name}_config.json")
-                    with open(config_path, "w") as f:
-                        json.dump(best_config, f, indent=4)  # Save as JSON with indentation for readability
-                    print(f"Saved best config for {model_name} at {config_path}")
+                # Save history
+                history_path = os.path.join(model_save_dir, "history.pkl")
+                with open(history_path, "wb") as f:
+                    pickle.dump(best_history, f)
+                print(f"Saved history to {history_path}")
+                # Save weights
+                weights_path = os.path.join(model_save_dir, "weights.pkl")
+                with open(weights_path, "wb") as f:
+                    pickle.dump(best_weights, f)
+                print(f"Saved weights to {weights_path}")
+                # Save config
+                config_path = os.path.join(model_save_dir, "config.json")
+                with open(config_path, "w") as f:
+                    json.dump(best_config, f, indent=2)
+                print(f"Saved config to {config_path}")
             else:
-                print("History not found for this model.")
+                print(f"No valid results for {model_name}")
+
 if __name__ == "__main__":
     main()
