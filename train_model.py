@@ -11,6 +11,8 @@ from models import (
 )
 import optuna
 import wandb
+import pickle
+import os
 
 function_mappings = {
     "SNN": SNN,
@@ -58,7 +60,7 @@ def regularization_loss_original(spks, config):
 
 
 # --- Core Training/Evaluation Functions ---
-def run_epoch(model, data_loader, weights, device, config, mode='train'):
+def run_epoch(model, data_loader, weights, device, config, data_config, mode='train', optimizer=None):
     """
     Runs one epoch. Returns:
       avg_loss, accuracy,
@@ -66,17 +68,17 @@ def run_epoch(model, data_loader, weights, device, config, mode='train'):
       voltage_tensors (list of recs[0]), spike_tensors (list of recs[1]), recurrent_tensors (list of recs[3]).
     """
     w1, w2, v1 = weights
-    alpha = float(np.exp(-config['time_step'] / config['tau_syn']))
-    beta = float(np.exp(-config['time_step'] / config['tau_mem']))
+    alpha = float(np.exp(-data_config['time_step'] / data_config['tau_syn']))
+    beta = float(np.exp(-data_config['time_step'] / data_config['tau_mem']))
     spike_fn = SurrGradSpike.apply
     log_softmax = nn.LogSoftmax(dim=1)
     loss_fn = nn.NLLLoss()
 
-    if mode == 'train':
-        model.train()
-        optimizer = torch.optim.Adam(weights, lr=config['learning_rate'])
-    else:
-        model.eval()
+    # if mode == 'train':
+    #     model.train()
+        # optimizer = torch.optim.Adam(weights, lr=config['learning_rate'])
+    # else:
+    #     model.eval()
 
     total_loss = 0.0
     all_preds, all_labels = [], []
@@ -110,9 +112,12 @@ def run_epoch(model, data_loader, weights, device, config, mode='train'):
         # track metrics
         per_timestep_spike_counts.append(neurons_spiking_per_timestep(spks))
         total_spikes += total_spike_count(spks)
-        voltage_tensors.append(volt.detach().cpu())
-        spike_tensors.append(spks.detach().cpu())
-        recurrent_tensors.append(rec_out.detach().cpu())
+        if volt != None:
+            voltage_tensors.append(volt.detach().cpu())
+        if spks != None:
+            spike_tensors.append(spks.detach().cpu())
+        if rec_out != None:
+            recurrent_tensors.append(rec_out.detach().cpu())
 
         if mode == 'train':
             optimizer.zero_grad()
@@ -149,10 +154,11 @@ def train_and_evaluate(model, train_loader, val_loader, test_loader, config, dat
             'voltage_tensors': [], 'spike_tensors': [], 'recurrent_tensors': []
         }
     history['test'] = {**history['train']}
+    optimizer = torch.optim.Adam([w1, w2, v1], lr=config['learning_rate'])
 
     for epoch in range(config['epochs']):
-        t_metrics = run_epoch(model, train_loader, (w1, w2, v1), device, config, mode='train')
-        v_metrics = run_epoch(model, val_loader,   (w1, w2, v1), device, config, mode='eval')
+        t_metrics = run_epoch(model, train_loader, (w1, w2, v1), device, config, data_config, mode='train', optimizer=optimizer)
+        v_metrics = run_epoch(model, val_loader,   (w1, w2, v1), device, config, data_config, mode='eval')
 
         for split, metrics in zip(['train','val'], [t_metrics, v_metrics]):
             history[split]['loss'].append(metrics[0])
@@ -162,20 +168,40 @@ def train_and_evaluate(model, train_loader, val_loader, test_loader, config, dat
             history[split]['voltage_tensors'].append(metrics[4])
             history[split]['spike_tensors'].append(metrics[5])
             history[split]['recurrent_tensors'].append(metrics[6])
-
-        if wandb_run:
-            wandb_run.log({
-                'epoch': epoch,
-                'train_loss': history['train']['loss'][-1], 'train_acc': history['train']['acc'][-1],
-                'val_loss': history['val']['loss'][-1], 'val_acc': history['val']['acc'][-1]
-            })
+            if wandb_run:
+                wandb_run.log({
+                    f"{split}_loss": metrics[0],
+                    f"{split}_acc": metrics[1],
+                    f"{split}_spikes_per_t": metrics[2],
+                    f"{split}_total_spikes": metrics[3],
+                })
 
     # test
-    test_metrics = run_epoch(model, test_loader, (w1, w2, v1), device, config, mode='eval')
+    test_metrics = run_epoch(model, test_loader, (w1, w2, v1), device, config, data_config, mode='eval')
     for key, val in zip(['loss','acc','spikes_per_t','total_spikes','voltage_tensors','spike_tensors','recurrent_tensors'], test_metrics):
         history['test'][key] = val
 
+    # if wandb_run:
+    #     # Save full history as a pickle file
+    #     save_path = "history.pkl"
+    #     with open(save_path, "wb") as f:
+    #         pickle.dump(history, f)
+
+    #     # Create W&B artifact and log the file
+    #     artifact = wandb.Artifact("full_training_history", type="results")
+    #     artifact.add_file(save_path)
+    #     wandb_run.log_artifact(artifact)
+
+    #     # Optional: cleanup local file
+    #     os.remove(save_path)
+
     print(f"Train Acc: {history['train']['acc'][-1]*100:.2f}%, Val Acc: {history['val']['acc'][-1]*100:.2f}%, Test Acc: {history['test']['acc']*100:.2f}%")
+    wandb_run.log({
+        "final_train_acc": history['train']['acc'][-1],
+        "final_val_acc": history['val']['acc'][-1],
+        "final_test_acc": history['test']['acc'],
+    })
+
     return history
 
 def objective(trial, model_name, data_config, device, train_loader, val_loader, test_loader, recurrent_setting, project_name):
@@ -206,15 +232,20 @@ def objective(trial, model_name, data_config, device, train_loader, val_loader, 
 
     with wandb.init(project=project_name, config=config, name=run_name):
         model_class = function_mappings[model_name]
-        result = train_and_val(
+        history = train_and_evaluate(
             model_class,
             train_loader,
             val_loader,
             test_loader,
-            wandb.run,
+            config,
             data_config,
             device,
-            trial,
-            config
+            wandb_run=wandb.run,
         )
-    return result['val']['acc'][-1]  # Return the validation accuracy for Optuna optimization
+
+    final_val_acc = history['val']['acc'][-1]
+
+    # Save history if it's better
+    trial.set_user_attr("history", history)  # store the history inside the trial for later if needed
+
+    return final_val_acc
