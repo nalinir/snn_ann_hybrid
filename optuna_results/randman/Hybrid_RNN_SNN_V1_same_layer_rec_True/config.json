@@ -1,0 +1,10 @@
+{
+  "model_name": "Hybrid_RNN_SNN_V1_same_layer",
+  "recurrent_setting": true,
+  "l1_upper": 2,
+  "v1_upper": 4,
+  "l2_upper": 0,
+  "v2_upper": 3,
+  "optimizer": "Adam",
+  "best_val_acc": 0.51953125
+}
