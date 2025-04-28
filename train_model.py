@@ -99,13 +99,14 @@ def run_epoch(model, data_loader, weights, device, config, data_config, mode='tr
             loss += (regularization_loss_zenke(bin_spks, config)
                      if config.get('zenke_actual', False)
                      else regularization_loss_original(bin_spks, config))
-
-        # track metrics
-        per_timestep_spike_counts.append(neurons_spiking_per_timestep(spks))
-        total_spikes += total_spike_count(spks)
-        if save_spikes and spks is not None:
+            # track metrics
+        if save_spikes and spks != None:
             spike_tensors.append(spks.detach().cpu())
-        if save_voltages and volt is not None:
+        if spks != None:
+            per_timestep_spike_counts.append(neurons_spiking_per_timestep(spks))
+            total_spikes += total_spike_count(spks)
+
+        if save_voltages and volt != None:
             voltage_tensors.append(volt.detach().cpu())
 
         if mode == 'train':
@@ -120,7 +121,8 @@ def run_epoch(model, data_loader, weights, device, config, data_config, mode='tr
 
     avg_loss = total_loss / len(data_loader)
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))
-    per_timestep_spike_counts = np.concatenate(per_timestep_spike_counts)
+    if spks != None:
+       per_timestep_spike_counts = np.concatenate(per_timestep_spike_counts)
 
     return avg_loss, accuracy, per_timestep_spike_counts, total_spikes, spike_tensors, voltage_tensors
 
