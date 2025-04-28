@@ -2,7 +2,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
-
+from loss_landscape import visualize_loss_landscape_3d, HybridNet
+from functools import partial
 from surrogate_gradient import SurrGradSpike
 
 def bound_regularizer(spk, v_t, l, l1=False, upper_bound=True, population_level=True):
@@ -298,6 +299,32 @@ def train_and_val(
         )
 
     # return val_accuracy  # For training sweeps
+    
+    
+    base_forward = SNN
+    bound_forward = partial(
+        base_forward,
+        w1=w1, w2=w2, v1=v1,
+        alpha=alpha, beta=beta,
+        spike_fn=spike_fn,
+        device=device,
+        recurrent=config.recurrent,
+        snn_mask=snn_mask
+    )
+    model_wrapper = HybridNet(
+        forward_fn=bound_forward,
+        w1=w1, w2=w2, v1=v1
+    ).to(device)
+    visualize_loss_landscape_3d(
+    model=model_wrapper,
+    model_name = model.__name__,
+    w1=w1, w2=w2, v1=v1,
+    dataloader=test_loader,
+    loss_fn=loss_fn,
+    radius=0.05,
+    resolution=31,
+    device=device
+    )
 
 
 def compute_classification_accuracy(
