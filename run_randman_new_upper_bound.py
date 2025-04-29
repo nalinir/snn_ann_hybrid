@@ -39,7 +39,7 @@ def main():
         device = torch.device("cpu")
 
     # Load data
-    train_loader, test_loader, val_loader = data_split_randman(data_config, device)
+    train_loader, test_loader, val_loader = data_split_randman(data_config, device, dim_manifold=2)
 
     for model_name in models:
         best_val_acc = -np.inf
@@ -68,7 +68,7 @@ def main():
                     # save_dir,
                 )
 
-            study.optimize(wrapped_objective, n_trials=20)
+            study.optimize(wrapped_objective, n_trials=100)
 
             best_trial = study.best_trial
             print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
