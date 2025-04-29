@@ -39,7 +39,7 @@ def main():
         device = torch.device("cpu")
 
     # Load data
-    train_loader, test_loader, val_loader = data_split_nmnist(data_config)
+    train_loader, test_loader, val_loader = data_split_nmnist(data_config, device, dim_manifold=1)
 
     for model_name in models:
         best_val_acc = -np.inf
