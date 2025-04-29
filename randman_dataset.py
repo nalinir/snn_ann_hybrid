@@ -130,12 +130,12 @@ def create_x_data(data, nb_steps, nb_inputs):
     return x_data
 
 
-def final_randman_dataset(nb_outputs, nb_inputs, nb_steps, batch_size):
+def final_randman_dataset(nb_outputs, nb_inputs, nb_steps, batch_size, dim_manifold=1):
     data, labels = make_spiking_dataset(
         nb_classes=nb_outputs,
         nb_units=nb_inputs,
         nb_steps=nb_steps,
-        dim_manifold=2,
+        dim_manifold=dim_manifold,
         seed=42,
         nb_samples=int(batch_size / nb_outputs) * 3,
     )
@@ -144,13 +144,14 @@ def final_randman_dataset(nb_outputs, nb_inputs, nb_steps, batch_size):
     return x_data, labels
 
 
-def data_split_randman(config, device):
+def data_split_randman(config, device, dim_manifold=1):
     batch_size_per_class = 128
     x_data, labels = final_randman_dataset(
         config["nb_outputs"],
         config["nb_inputs"],
         config["nb_steps"],
         batch_size_per_class * config["nb_outputs"],
+        dim_manifold=dim_manifold,
     )
     data_tensor = torch.tensor(x_data, dtype=torch.float32)
     labels_tensor = torch.tensor(labels, dtype=torch.int64)
