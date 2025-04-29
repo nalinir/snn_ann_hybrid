@@ -7,7 +7,7 @@ import numpy as np
 import os
 import pickle
 
-from nmnist_dataset import data_split_nmnist
+from randman_dataset import data_split_randman
 from train_model import objective
 
 models = [
@@ -22,7 +22,7 @@ def main():
     parser.add_argument(
         "--data_config_path",
         type=str,
-        default="/scratch/nar8991/snn/snn_ann_hybrid/nmnist_config.json",
+        default="/scratch/nar8991/snn/snn_ann_hybrid/randman_config.json",
         help="Path to the configuration JSON file.",
     )
     args = parser.parse_args()
@@ -39,7 +39,7 @@ def main():
         device = torch.device("cpu")
 
     # Load data
-    train_loader, test_loader, val_loader = data_split_nmnist(data_config)
+    train_loader, test_loader, val_loader = data_split_randman(data_config, device, dim_manifold=1)
 
     for model_name in models:
         best_val_acc = -np.inf
@@ -64,7 +64,7 @@ def main():
                     val_loader,
                     test_loader,
                     recurrent_setting,
-                    "Optuna_nmnist_v4",
+                    "Optuna_randman_v4_1d",
                     # save_dir,
                 )
 
@@ -86,7 +86,7 @@ def main():
                     **best_trial.params,
                     "best_val_acc": best_val_acc
                 }
-            save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/nmnist"
+            save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman_1d"
             os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
             # After finishing allowed recurrents for this model
             model_name_adj = model_name + f"_rec_{recurrent_setting}"
