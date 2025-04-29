@@ -1,0 +1,10 @@
+{
+  "model_name": "SNN",
+  "recurrent_setting": true,
+  "l1_upper": 36,
+  "v1_upper": 205,
+  "l2_upper": 0,
+  "v2_upper": 84,
+  "optimizer": "Adam",
+  "best_val_acc": 0.255
+}
