@@ -1,15 +1,19 @@
 import torch
+import json
+import argparse
+import wandb
+import optuna
+import numpy as np
+import os
+import pickle
 from shd_dataset import data_split_shd
+from train_model import objective
 from models import (
     SNN,
     ANN_with_LIF_output,
     Hybrid_RNN_SNN_rec,
     Hybrid_RNN_SNN_V1_same_layer,
 )
-from train_model import train_and_val
-import json
-import wandb
-import argparse
 
 function_mappings = {
     "SNN": SNN,
@@ -18,11 +22,15 @@ function_mappings = {
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
 }
 
+models = [
+    "SNN",
+    "ANN_with_LIF_output",
+    "Hybrid_RNN_SNN_rec",
+    "Hybrid_RNN_SNN_V1_same_layer",
+]
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run Wandb sweep for SNN regularization."
-    )
+    parser = argparse.ArgumentParser(description="Optuna + WandB tuning for SNN models")
     parser.add_argument(
         "--data_config_path",
         type=str,
@@ -34,23 +42,7 @@ def main():
     with open(args.data_config_path, "r") as f:
         data_config = json.load(f)
 
-    sweep_config = {
-        "method": "grid",
-        "name": "SNN Regularization Sweep",
-        "metric": {"name": "val_accuracy", "goal": "maximize"},
-        "parameters": {
-            "l1": {"values": [1e-6, 2e-6, 5e-6]},
-            "l2": {"values": [1e-6, 2e-6, 5e-6]},
-            "learning_rate": {
-                "value": 2e-5  # Keep learning rate constant for this sweep
-            },
-            "epochs": {"value": 40},
-            "regularization": {"value": True},
-            "optimizer": {"value": "Adam"},
-            "model_name": {"value": "SNN"},
-            "recurrent": {"value": True},
-        },
-    }
+    # Select device
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -58,49 +50,79 @@ def main():
     else:
         device = torch.device("cpu")
 
-    data_name = "shd"
+    # Load data
     train_loader, test_loader, val_loader = data_split_shd(data_config)
-    ## Regularization parameterization
 
-    def train_wandb():
-        with wandb.init() as run:
-            config = wandb.config
-            run.name = f"{model_name}-l1_{config['l1']}-l2_{config['l2']}-{data_name}-recurrent_{config['recurrent']}-regularization_{config['regularization']}"
-            model = function_mappings[config.model_name]
-            train_and_val(
-                model, train_loader, val_loader, test_loader, run, data_config, device
-            )
+    for model_name in models:
+        best_val_acc = -np.inf
+        best_history = None
+        best_config = None
+        allowed_recurrents = [True, False]
+        if model_name == "Hybrid_RNN_SNN_V1_same_layer":
+            allowed_recurrents = [True]
 
-    for model_name, model_func in function_mappings.items():
+        for recurrent_setting in allowed_recurrents:
+            print(f"Running optimization for model: {model_name}, recurrent={recurrent_setting}")
 
-        sweep_config["parameters"]["model_name"]["value"] = model_name
-        if model_name != "Hybrid_RNN_SNN_V1_same_layer":
-            # Set recurrent step to both True and False for each model (exception is our V1)
-            for i in [True, False]:
-                sweep_config["parameters"]["recurrent"]["value"] = i
-                # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_shd")
+            study = optuna.create_study(direction="maximize")
 
-                # Run the sweep agent
-                wandb.agent(
-                    sweep_id,
-                    train_wandb,
-                    count=9,
-                )  # Run all 3 x 3 combinations
-        else:
-            sweep_config["parameters"]["recurrent"]["value"] = True
-            # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project="SNN_test_reg_optimize_shd")
+            def wrapped_objective(trial):
+                return objective(
+                    trial,
+                    model_name,
+                    data_config,
+                    device,
+                    train_loader,
+                    val_loader,
+                    test_loader,
+                    recurrent_setting,
+                    "Optuna_shd_v4",
+                )
 
-            # Run the sweep agent
-            wandb.agent(
-                sweep_id,
-                train_wandb,
-                count=9,
-            )  # Run all 3 x 3 combinations
+            study.optimize(wrapped_objective, n_trials=20)
 
-    ## Later -> Initialization parameterization with the loss function (using data_split_randman)
+            best_trial = study.best_trial
+            print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
+            print(best_trial)
 
+            if best_trial.value > best_val_acc:
+                print(f"New best for {model_name} with val acc {best_trial.value:.4f}")
+                best_val_acc = best_trial.value
+                best_history = best_trial.user_attrs["history"]
+                best_weights = best_trial.user_attrs["weights"]
+                print(f"Best trial user attributes: {best_trial.user_attrs}")
+                best_config = {
+                    "model_name": model_name,
+                    "recurrent_setting": recurrent_setting,
+                    **best_trial.params,
+                    "best_val_acc": best_val_acc
+                }
+
+            save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/shd"
+            os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
+            # After finishing allowed recurrents for this model
+            model_name_adj = model_name + f"_rec_{recurrent_setting}"
+            if best_history and best_config:
+                model_save_dir = os.path.join(save_dir, model_name_adj)
+                os.makedirs(model_save_dir, exist_ok=True)
+
+                # Save history
+                history_path = os.path.join(model_save_dir, "history.pkl")
+                with open(history_path, "wb") as f:
+                    pickle.dump(best_history, f)
+                print(f"Saved history to {history_path}")
+                # Save weights
+                weights_path = os.path.join(model_save_dir, "weights.pkl")
+                with open(weights_path, "wb") as f:
+                    pickle.dump(best_weights, f)
+                print(f"Saved weights to {weights_path}")
+                # Save config
+                config_path = os.path.join(model_save_dir, "config.json")
+                with open(config_path, "w") as f:
+                    json.dump(best_config, f, indent=2)
+                print(f"Saved config to {config_path}")
+            else:
+                print(f"No valid results for {model_name}")
 
 if __name__ == "__main__":
     main()
