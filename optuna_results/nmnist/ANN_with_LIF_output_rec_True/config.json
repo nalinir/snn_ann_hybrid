@@ -1,0 +1,10 @@
+{
+  "model_name": "ANN_with_LIF_output",
+  "recurrent_setting": true,
+  "l1_upper": 89,
+  "v1_upper": 715,
+  "l2_upper": 0,
+  "v2_upper": 19,
+  "optimizer": "Adam",
+  "best_val_acc": 0.1
+}
