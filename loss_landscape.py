@@ -1,125 +1,127 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from mpl_toolkits.mplot3d import Axes3D  # registers the 3D projection
+from mpl_toolkits.mplot3d import Axes3D 
 import torch.nn as nn
 import wandb
+import torch.nn.functional as F
+from tqdm import tqdm
 
-# wrap SNN into a single-arg function
-def snn_forward(x):
-    return SNN(
-        x,             # input
-        w1, w2, v1,    # global parameters
-        alpha, beta,   # time constants
-        spike_fn,      # spike nonlinearity
-        device,        # device to run on
-        recurrent,     # bool for recurrent connectivity
-        snn_mask       # any mask tensor
-    )
-
+# wrapper registers the parameters
 class HybridNet(nn.Module):
-    def __init__(self, forward_fn, w1, w2, v1):
+    def __init__(self, base_forward, w1, w2, v1, alpha, beta,
+                 spike_fn, device, recurrent, snn_mask):
         super().__init__()
-        # register the weight parameters
-        self.w1 = nn.Parameter(w1)
-        self.w2 = nn.Parameter(w2)
-        self.v1 = nn.Parameter(v1)
-        # everything else is closed over in forward_fn
-        self._forward_fn = forward_fn
+        self.w1, self.w2, self.v1 = (
+            nn.Parameter(w1),
+            nn.Parameter(w2),
+            nn.Parameter(v1),
+        )
+        self.alpha, self.beta   = alpha, beta
+        self.spike_fn           = spike_fn
+        self.device             = device
+        self.recurrent          = recurrent
+        self.register_buffer("snn_mask", snn_mask)
+        self.base_forward       = base_forward
 
     def forward(self, x):
-        return self._forward_fn(x)
+        out_rec, _ = self.base_forward(
+            x,
+            self.w1, self.w2, self.v1,
+            self.alpha, self.beta,
+            self.spike_fn,
+            self.device,
+            self.recurrent,
+            self.snn_mask
+        )
+        m, _   = out_rec.max(dim=1)
+        logp   = F.log_softmax(m, dim=1)
+        return logp
+    
+def _flatten_params(params):
+    """Concatenate all param tensors into one vector, return shapes for unflattening."""
+    shapes, parts = [], []
+    for p in params:
+        shapes.append(p.shape)
+        parts.append(p.data.flatten())
+    return torch.cat(parts), shapes
 
-        
-def visualize_loss_landscape_3d(model, model_name, w1, w2, v1,
-                                    dataloader, loss_fn,
-                                    radius=0.1, resolution=21,
-                                    device='cpu'):
-    # 0) move model and weights onto device
-    model = model.to(device)
-    w1, w2, v1 = w1.to(device), w2.to(device), v1.to(device)
-    model.eval()
+@torch.no_grad()
+def _assign_flat_params(params, flat_vec, shapes):
+    """Overwrite each param in-place from the flat vector (no grad)."""
+    idx = 0
+    for p, shp in zip(params, shapes):
+        n = p.numel()
+        p.data.copy_(flat_vec[idx:idx+n].view(shp))
+        idx += n
 
-    # 1) grab exactly one batch
-    inputs, targets = next(iter(dataloader))
-    x, y = inputs.to(device), targets.to(device)
+@torch.no_grad()
+def visualize_loss_landscape_3d(model,
+                             criterion,
+                             dataloader,
+                             device     = 'cpu',
+                             resolution = 21,
+                             range_lim  = 1e-2,
+                             save_path  = None):
+    """
+    Visualize the loss landscape of `model` around its current parameters.
+    """
+    # 0) Prepare
+    model.to(device).eval()
+    xb, yb     = next(iter(dataloader))
+    xb, yb     = xb.to(device), yb.to(device)
 
-    # 2) save originals
-    orig_w1, orig_w2, orig_v1 = w1.clone(), w2.clone(), v1.clone()
-    # 3) flatten
-    base = torch.cat([orig_w1.flatten(),
-                      orig_w2.flatten(),
-                      orig_v1.flatten()])
-    # 4) pick two random orthonormal directions
-    d1 = torch.randn_like(base);  d1 /= torch.norm(d1)
-    d2 = torch.randn_like(base)
-    d2 -= (d2 @ d1) * d1;  d2 /= torch.norm(d2)
+    # 1) Snapshot & flatten params
+    params      = list(model.parameters())
+    base_vec, shapes = _flatten_params(params)
 
-    # 5) prepare grid
-    alphas = np.linspace(-radius, radius, resolution)
-    betas  = np.linspace(-radius, radius, resolution)
-    loss_mat = np.zeros((resolution, resolution), dtype=np.float32)
+    # 2) Orthonormal directions
+    torch.manual_seed(0)
+    d1 = torch.randn_like(base_vec); d1 /= d1.norm()
+    d2 = torch.randn_like(base_vec)
+    d2 -= torch.dot(d2, d1) * d1; d2 /= d2.norm()
 
-    # 6) sweep the grid
-    for i, a in enumerate(alphas):
+    # 3) Build grid
+    alphas = np.linspace(-range_lim, range_lim, resolution)
+    betas  = np.linspace(-range_lim, range_lim, resolution)
+    loss_grid = np.empty((resolution, resolution), dtype=np.float32)
+
+    # 4) Sweep  
+    for i, a in enumerate(tqdm(alphas, desc="α")):
         for j, b in enumerate(betas):
-            offset = a*d1 + b*d2
-            idx = 0
-            # assign perturbed params
-            for tensor, orig in zip((w1, w2, v1),
-                                    (orig_w1, orig_w2, orig_v1)):
-                n = orig.numel()
-                pert = (base + offset)[idx:idx+n].view(orig.shape).to(device)
-                tensor.data.copy_(pert)
-                idx += n
+            offset = a * d1 + b * d2
+            _assign_flat_params(params, base_vec + offset, shapes)
+            loss_grid[j, i] = criterion(model(xb), yb).item()
 
-            # forward & loss
-            out, recs = model(x)
-            m, _ = out.max(1)
-            logp = torch.nn.functional.log_softmax(m, dim=1)
-            loss_mat[j, i] = loss_fn(logp, y).item()
+    # 5) Restore
+    _assign_flat_params(params, base_vec, shapes)
 
-    # 7) restore originals
-    w1.data.copy_(orig_w1)
-    w2.data.copy_(orig_w2)
-    v1.data.copy_(orig_v1)
-
-    # 8a) 2D contour
-    fig2d, ax2d = plt.subplots(figsize=(5,4))
-    cs = ax2d.contourf(alphas, betas, loss_mat, levels=30, cmap='viridis')
-    fig2d.colorbar(cs, ax=ax2d, label="Loss")
-    ax2d.set_xlabel("α")
-    ax2d.set_ylabel("β")
-    ax2d.set_title("2D Loss Contour")
-    # Save as high-res PNG
-    fig2d.savefig(f"{model_name}_2d_loss_contour.png", dpi=300, bbox_inches="tight")
-    wandb.log({ "2D Loss Contour": wandb.Image(f"{model_name}_2d_loss_contour.png") })
-    plt.show()
-
-    # 8b) 3D surface
+    # 6) Plot
     A, B = np.meshgrid(alphas, betas)
+
+    # 6a) 3D surface
     fig3d = plt.figure(figsize=(6,5))
     ax3d  = fig3d.add_subplot(111, projection='3d')
-    surf = ax3d.plot_surface(A, B, loss_mat, cmap='viridis',
-                            edgecolor='none', alpha=0.9)
+    surf = ax3d.plot_surface(A, B, loss_grid, cmap='viridis',
+                             edgecolor='none', alpha=0.9)
     ax3d.set_xlabel("α"); ax3d.set_ylabel("β"); ax3d.set_zlabel("Loss")
     ax3d.set_title("3D Loss Surface")
-    fig3d.colorbar(surf, shrink=0.5, aspect=10, label="Loss")
-    # Save to PNG
-    fig3d.savefig(f"{model_name}_3d_loss_surface.png", dpi=300, bbox_inches="tight")
-    wandb.log({ "3D Loss Surface": wandb.Image(f"{model_name}_3d_loss_surface.png") })
+    fig3d.colorbar(surf, shrink=0.6, aspect=10, label="Loss")
+
+    fig3d.savefig("3d_loss_surface.png", dpi=300, bbox_inches="tight")
+    wandb.log({"3D Loss Surface": wandb.Image("3d_loss_surface.png")})
     plt.show()
 
+    # 6b) Contour
+    fig2d, ax2d = plt.subplots(figsize=(5,4))
+    cs = ax2d.contourf(alphas, betas, loss_grid, levels=30, cmap='viridis')
+    fig2d.colorbar(cs, ax=ax2d, label="Loss")
+    ax2d.set_xlabel("α"); ax2d.set_ylabel("β")
+    ax2d.set_title("2D Loss Contour")
 
-"""
-# Usage:
-visualize_loss_landscape_loader(
-    model=HybridNet(w1, w2, v1, Hybrid_RNN_SNN_V1_same_layer),
-    w1=w1, w2=w2, v1=v1,
-    dataloader=test_loader,
-    loss_fn=torch.nn.NLLLoss(),
-    radius=0.05,
-    resolution=31,
-    device=device
-)
-"""
+    fig2d.savefig("2d_loss_contour.png", dpi=300, bbox_inches="tight")
+    wandb.log({"2D Loss Contour": wandb.Image("2d_loss_contour.png")})
+    plt.show()
+
+    plt.close(fig3d)
+    plt.close(fig2d)
