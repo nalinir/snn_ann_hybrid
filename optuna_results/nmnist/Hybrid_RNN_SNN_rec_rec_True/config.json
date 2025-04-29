@@ -1,0 +1,10 @@
+{
+  "model_name": "Hybrid_RNN_SNN_rec",
+  "recurrent_setting": true,
+  "l1_upper": 63,
+  "v1_upper": 19,
+  "l2_upper": 100,
+  "v2_upper": 39,
+  "optimizer": "Adam",
+  "best_val_acc": 0.1
+}
