@@ -1,10 +1,10 @@
 {
   "model_name": "Hybrid_RNN_SNN_rec",
   "recurrent_setting": false,
-  "l1_upper": 1,
-  "v1_upper": 1,
-  "l2_upper": 1,
-  "v2_upper": 1,
+  "l1_upper": 4,
+  "v1_upper": 3,
+  "l2_upper": 0,
+  "v2_upper": 2,
   "optimizer": "Adam",
-  "best_val_acc": 0.65625
+  "best_val_acc": 0.69921875
 }
