@@ -194,7 +194,7 @@ def objective(trial, model_name, data_config, device, train_loader, val_loader, 
         "l2_upper": trial.suggest_categorical("l2_upper", [0, 1, data_config["nb_hidden"]]),
         "v2_upper": trial.suggest_int("v2_upper", 0, data_config["nb_hidden"]),
         "learning_rate": 2e-3,
-        "epochs": 300,
+        "epochs": data_config["epochs"],
         "regularization": True,
         "optimizer": trial.suggest_categorical("optimizer", ["Adam"]),
         "recurrent": recurrent_setting,  # <- use the fixed value

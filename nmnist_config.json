@@ -6,6 +6,7 @@
     "nb_steps": 200,
     "tau_mem": 0.01,
     "tau_syn": 0.005,
-    "batch_size": 20
+    "batch_size": 20,
+    "epochs": 40
   }
   
