@@ -68,7 +68,7 @@ def main():
                     # save_dir,
                 )
 
-            study.optimize(wrapped_objective, n_trials=1)
+            study.optimize(wrapped_objective, n_trials=20)
 
             best_trial = study.best_trial
             print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
@@ -88,10 +88,20 @@ def main():
                 }
             save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman_1d"
             os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
-            # After finishing allowed recurrents for this model
+            # After finishing allowed recurrents for this model - CLEAN THIS UP EVENTUALLY ***
             model_name_adj = model_name + f"_rec_{recurrent_setting}"
+            model_save_dir = os.path.join(save_dir, model_name_adj)
+            os.makedirs(model_save_dir, exist_ok=True)
+            config_path = os.path.join(model_save_dir, "config.json")
+            if os.path.exists(config_path):
+                with open(config_path, 'rb') as f:
+                    saved_data = pickle.load(f)
+                    val_acc = saved_data['best_val_acc']
+                    if val_acc > best_val_acc:
+                        print(f"Best val acc {val_acc} is greater than current best {best_val_acc}. Not saving.")
+                        continue
+
             if best_history and best_config:
-                model_save_dir = os.path.join(save_dir, model_name_adj)
                 os.makedirs(model_save_dir, exist_ok=True)
 
                 # Save history

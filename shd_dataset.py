@@ -11,16 +11,16 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
     units_fired = spike_events["x"]
     polarities = spike_events["p"]
 
-    spike_counts = np.zeros(nb_units, dtype=np.int32)
-    max_spikes_per_unit = 30
+    # spike_counts = np.zeros(nb_units, dtype=np.int32)
+    # max_spikes_per_unit = 30
 
     for t, unit, p in zip(timestamps, units_fired, polarities):
-        if spike_counts[unit] >= max_spikes_per_unit:
-            continue
+        # if spike_counts[unit] >= max_spikes_per_unit:
+        #     continue
         time_bin = int(round(t * time_step))
         if 0 <= time_bin < nb_steps and 0 <= unit < nb_units:
-            spike_train[time_bin, unit] = 1.0
-            spike_counts[unit] += 1
+            spike_train[time_bin, unit] += 1.0
+            # spike_counts[unit] += 1
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
