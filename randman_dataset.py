@@ -113,6 +113,7 @@ def convert_to_x_data(spike_events, nb_steps, nb_units):
             event[0]
         )  # Convert time to an index in the range [0, nb_steps-1]
         unit_id = int(event[1])  # Unit index (neuron)
+        # This is fine bc each neuron only spikes once
         x_data[time_step, unit_id] = (
             1  # Mark the spike at the correct time step and unit
         )

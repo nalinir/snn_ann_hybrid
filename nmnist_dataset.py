@@ -29,14 +29,11 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step):
     # Iterate through all events simultaneously
     for x, y, t, p in zip(x_coords, y_coords, timestamps, polarities):
         time_bin = int(t * time_step)  # Convert time to timestep
-        if p == 1:  # On spikes only
-            if 0 <= time_bin < nb_steps:
-                # Calculate neuron ID with bounds checking
-                sqrt_units = int(np.sqrt(nb_units))
-                x = min(x, sqrt_units - 1)
-                y = min(y, sqrt_units - 1)
-                neuron_id = x + y * sqrt_units
-                spike_train[time_bin, neuron_id] = 1
+        # if p == 1:  # On spikes only
+            time_bin = int(t * time_step)  # Convert time to timestep
+            if time_bin < nb_steps:
+                neuron_id = x + y * int(np.sqrt(nb_units))  # Flatten 2D coordinates into 1D neuron ID
+                spike_train[time_bin, neuron_id] += 1
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
