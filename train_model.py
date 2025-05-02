@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
+from loss_landscape import visualize_loss_landscape_3d, HybridNet
+from functools import partial
 from surrogate_gradient import SurrGradSpike
 from models import (
     SNN,
@@ -58,8 +60,6 @@ def regularization_loss_original(spks, config):
     loss += config['l2'] * torch.mean(torch.sum(torch.sum(spks, dim=0), dim=0) ** 2)
     return loss
 
-
-# --- Core Training/Evaluation Functions ---
 # --- Core Training/Evaluation Functions ---
 def run_epoch(model, data_loader, weights, device, config, data_config, mode='train', optimizer=None, save_spikes=False, save_voltages=False):
     w1, w2, v1 = weights
@@ -173,51 +173,80 @@ def train_and_evaluate(model, train_loader, val_loader, test_loader, config, dat
 
     print(f"Train Acc: {history['train']['acc'][-1]*100:.2f}%, Val Acc: {history['val']['acc'][-1]*100:.2f}%, Test Acc: {history['test']['acc']*100:.2f}%")
     if wandb_run:
-        wandb_run.log({
-            "final_train_acc": history['train']['acc'][-1],
-            "final_val_acc": history['val']['acc'][-1],
-            "final_test_acc": history['test']['acc'],
-        })
-
-    return history, w1, w2, v1
-
-
-def objective(trial, model_name, data_config, device, train_loader, val_loader, test_loader, recurrent_setting, project_name):
-    # Use original distribution styles from the WandB sweep config
-
-    config = {
-        "model_name": model_name,
-        "l2_lower": data_config["nb_hidden"],
-        "v2_lower": 1e-2,
-        "l1_upper": trial.suggest_int("l1_upper", 1, data_config["nb_hidden"]),
-        "v1_upper": trial.suggest_int("v1_upper", 0, data_config["nb_hidden"] * data_config["nb_outputs"]),
-        "l2_upper": trial.suggest_categorical("l2_upper", [0, 1, data_config["nb_hidden"]]),
-        "v2_upper": trial.suggest_int("v2_upper", 0, data_config["nb_hidden"]),
-        "learning_rate": 2e-3,
-        "epochs": data_config["epochs"],
-        "regularization": True,
-        "optimizer": trial.suggest_categorical("optimizer", ["Adam"]),
-        "recurrent": recurrent_setting,  # <- use the fixed value
-        "zenke_actual": True,
-    }
-
-    run_name = (
-        f"{model_name}-recurrent_{config['recurrent']}-"
-        f"l2_lower_{config['l2_lower']}-v2_lower_{config['v2_lower']}-"
-        f"l1_upper_{config['l1_upper']}-v1_upper_{config['v1_upper']}-"
-        f"l2_upper_{config['l2_upper']}-v2_upper_{config['v2_upper']}-"
-        f"regularization_{config['regularization']}"
+        wandb_run.log(
+            {
+                "final_train_accuracy": train_accuracy,
+                "final_test_accuracy": test_accuracy,
+                "final_val_accuracy": val_accuracy,
+                "final_train_spike_ct": train_spike_ct,
+                "final_test_spike_ct": test_spike_ct,
+                "final_val_spike_ct": val_spike_ct,
+            }
+        )    
+    
+    base_forward = model
+    bound_forward = partial(
+        base_forward,
+        w1=w1, w2=w2, v1=v1,
+        alpha=alpha, beta=beta,
+        spike_fn=spike_fn,
+        device=device,
+        recurrent=config.recurrent,
+        snn_mask=snn_mask
+    )
+    model_wrapper = HybridNet(
+        forward_fn=bound_forward,
+        w1=w1, w2=w2, v1=v1
+    ).to(device)
+    visualize_loss_landscape_3d(
+    model=model_wrapper,
+    model_name = model.__name__,
+    w1=w1, w2=w2, v1=v1,
+    dataloader=test_loader,
+    loss_fn=loss_fn,
+    radius=0.05,
+    resolution=31,
+    device=device
     )
 
-    with wandb.init(project=project_name, config=config, name=run_name):
-        model_class = function_mappings[model_name]
-        history, w1, w2, v1 = train_and_evaluate(
-            model_class,
-            train_loader,
-            val_loader,
-            test_loader,
-            config,
-            data_config,
+
+def compute_classification_accuracy(
+    data_loader,
+    w1,
+    w2,
+    v1,
+    alpha,
+    beta,
+    spike_fn,
+    snn_mask,
+    data_config,
+    device,
+    config,
+    model,
+    incl_confusion_matrix=False,
+):
+    """
+    Computes classification accuracy and confusion matrix on supplied data in batches.
+
+    Returns:
+        accuracy: Overall classification accuracy.
+        conf_matrix: Confusion matrix of shape (num_classes, num_classes).
+    """
+    all_preds = []
+    all_labels = []
+    spike_count = 0
+    for x_local, y_local in data_loader:
+        # Move data to the appropriate device
+        x_local, y_local = x_local.to(device), y_local.to(device)
+
+        output, recs = model(
+            x_local,
+            w1,
+            w2,
+            v1,
+            alpha,
+            beta,
+            spike_fn,
             device,
             wandb_run=wandb.run,
         )
