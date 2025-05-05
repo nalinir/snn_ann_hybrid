@@ -78,7 +78,9 @@ def main():
             for i in [True, False]:
                 sweep_config["parameters"]["recurrent"]["value"] = i
                 # Initialize a Wandb sweep for the current model
-                sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_randman_2")
+                sweep_id = wandb.sweep(
+                    sweep_config, project=f"SNN_test_reg_optimize_randman_2"
+                )
 
                 # Run the sweep agent
                 wandb.agent(
@@ -89,7 +91,9 @@ def main():
         else:
             sweep_config["parameters"]["recurrent"]["value"] = True
             # Initialize a Wandb sweep for the current model
-            sweep_id = wandb.sweep(sweep_config, project=f"SNN_test_reg_optimize_randman_2")
+            sweep_id = wandb.sweep(
+                sweep_config, project=f"SNN_test_reg_optimize_randman_2"
+            )
 
             # Run the sweep agent
             wandb.agent(

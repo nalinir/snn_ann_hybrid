@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 import numpy as np
 from sklearn.model_selection import train_test_split
 
+
 def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
     timestamps = spike_events["t"] / 1e6
@@ -24,6 +25,7 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
+
 def data_split_shd(config):
     train_dataset = tonic.datasets.SHD(save_to="./data", train=True)
     test_dataset = tonic.datasets.SHD(save_to="./data", train=False)
@@ -41,40 +43,95 @@ def data_split_shd(config):
 
     time_step = config["nb_steps"] / config["max_time"]
 
-    train_x_data = torch.stack([preprocess_spike_events(
-        train_dataset[i][0], config["nb_steps"], config["nb_inputs"], time_step, config["max_time"]
-    ) for i in train_indices])
-    train_y_tensor = torch.tensor([train_dataset[i][1] for i in train_indices], dtype=torch.int64)
+    train_x_data = torch.stack(
+        [
+            preprocess_spike_events(
+                train_dataset[i][0],
+                config["nb_steps"],
+                config["nb_inputs"],
+                time_step,
+                config["max_time"],
+            )
+            for i in train_indices
+        ]
+    )
+    train_y_tensor = torch.tensor(
+        [train_dataset[i][1] for i in train_indices], dtype=torch.int64
+    )
 
-    val_x_data = torch.stack([preprocess_spike_events(
-        train_dataset[i][0], config["nb_steps"], config["nb_inputs"], time_step, config["max_time"]
-    ) for i in val_indices])
-    val_y_tensor = torch.tensor([train_dataset[i][1] for i in val_indices], dtype=torch.int64)
+    val_x_data = torch.stack(
+        [
+            preprocess_spike_events(
+                train_dataset[i][0],
+                config["nb_steps"],
+                config["nb_inputs"],
+                time_step,
+                config["max_time"],
+            )
+            for i in val_indices
+        ]
+    )
+    val_y_tensor = torch.tensor(
+        [train_dataset[i][1] for i in val_indices], dtype=torch.int64
+    )
 
-    test_x_data = torch.stack([preprocess_spike_events(
-        test_dataset[i][0], config["nb_steps"], config["nb_inputs"], time_step, config["max_time"]
-    ) for i in test_subset_indices])
-    test_y_tensor = torch.tensor([test_dataset[i][1] for i in test_subset_indices], dtype=torch.int64)
+    test_x_data = torch.stack(
+        [
+            preprocess_spike_events(
+                test_dataset[i][0],
+                config["nb_steps"],
+                config["nb_inputs"],
+                time_step,
+                config["max_time"],
+            )
+            for i in test_subset_indices
+        ]
+    )
+    test_y_tensor = torch.tensor(
+        [test_dataset[i][1] for i in test_subset_indices], dtype=torch.int64
+    )
 
     train_tensor_dataset = TensorDataset(train_x_data, train_y_tensor)
     val_tensor_dataset = TensorDataset(val_x_data, val_y_tensor)
     test_data = TensorDataset(test_x_data, test_y_tensor)
 
     train_loader = DataLoader(
-        train_tensor_dataset, batch_size=config["batch_size"], shuffle=True, pin_memory=True, drop_last=True, num_workers=2
+        train_tensor_dataset,
+        batch_size=config["batch_size"],
+        shuffle=True,
+        pin_memory=True,
+        drop_last=True,
+        num_workers=2,
     )
     val_loader = DataLoader(
-        val_tensor_dataset, batch_size=config["batch_size"], shuffle=False, pin_memory=True, drop_last=False, num_workers=2
+        val_tensor_dataset,
+        batch_size=config["batch_size"],
+        shuffle=False,
+        pin_memory=True,
+        drop_last=False,
+        num_workers=2,
     )
     test_loader = DataLoader(
-        test_data, batch_size=config["batch_size"], shuffle=False, pin_memory=True, drop_last=False, num_workers=2
+        test_data,
+        batch_size=config["batch_size"],
+        shuffle=False,
+        pin_memory=True,
+        drop_last=False,
+        num_workers=2,
     )
 
-    for loader, name in [(train_loader, "Train"), (val_loader, "Validation"), (test_loader, "Test")]:
+    for loader, name in [
+        (train_loader, "Train"),
+        (val_loader, "Validation"),
+        (test_loader, "Test"),
+    ]:
         all_labels = []
         for _, y_batch in loader:
             all_labels.extend(y_batch.numpy())
-        print(f"{name} class distribution:", np.bincount(all_labels, minlength=config["nb_outputs"]))
+        print(
+            f"{name} class distribution:",
+            np.bincount(all_labels, minlength=config["nb_outputs"]),
+        )
 
     X_batch, _ = next(iter(train_loader))
     print("Spike train shape:", X_batch.shape)
@@ -82,6 +139,8 @@ def data_split_shd(config):
     print("Spikes per sample:", X_batch.sum(dim=(1, 2)))
     spikes_per_bin = X_batch.sum(dim=(0, 2))
     print("Spikes per time bin:", spikes_per_bin.numpy())
-    print("Average spikes per time bin per unit:", X_batch.mean(dim=0).mean(dim=1).numpy())
+    print(
+        "Average spikes per time bin per unit:", X_batch.mean(dim=0).mean(dim=1).numpy()
+    )
 
     return train_loader, val_loader, test_loader
