@@ -281,7 +281,7 @@ def train_and_evaluate(
         recurrent=config['recurrent'],
         snn_mask=snn_mask,
         ).to(device)
-    visualize_loss_landscape_3d(
+    fig2d, fig3d = visualize_loss_landscape_3d(
         model=model_wrapper,
         criterion=nn.NLLLoss(),
         dataloader=test_loader,
@@ -291,7 +291,7 @@ def train_and_evaluate(
     )
     # Save the visualizations to wandb
 
-    return history, w1, w2, v1
+    return history, w1, w2, v1, fig2d, fig3d
 
 
 def objective(
@@ -337,7 +337,7 @@ def objective(
 
     with wandb.init(project=project_name, config=config, name=run_name):
         model_class = function_mappings[model_name]
-        history, w1, w2, v1 = train_and_evaluate(
+        history, w1, w2, v1, fig2d, fig3d = train_and_evaluate(
             model_class,
             train_loader,
             val_loader,
@@ -357,4 +357,7 @@ def objective(
     trial.set_user_attr(
         "weights", (w1, w2, v1)
     )  # store the weights inside the trial for later if needed
+    trial.set_user_attr(
+        "3d_landscape", fig3d
+    )  # store the model name inside the trial for later if needed
     return final_val_acc
