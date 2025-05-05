@@ -7,6 +7,10 @@ import wandb
 import torch.nn.functional as F
 from tqdm import tqdm
 
+global_min = 0
+global_max = 1
+
+zlim = (global_min, global_max)
 
 # wrapper registers the parameters
 class HybridNet(nn.Module):
@@ -132,6 +136,7 @@ def visualize_loss_landscape_3d(
     ax3d.set_ylabel("β")
     ax3d.set_zlabel("Loss")
     ax3d.set_title("3D Loss Surface")
+    ax3d.set_zlim(*zlim)
     fig3d.colorbar(surf, shrink=0.6, aspect=10, label="Loss")
 
     fig3d.savefig("3d_loss_surface.png", dpi=300, bbox_inches="tight")
