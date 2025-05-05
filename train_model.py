@@ -319,7 +319,7 @@ def objective(
             "l2_upper", [0, 1, data_config["nb_hidden"]]
         ),
         "v2_upper": trial.suggest_int("v2_upper", 0, data_config["nb_hidden"]),
-        "learning_rate": 2e-3,
+        "learning_rate": trial.suggest_categorical("learning_rate", [2e-3]),
         "epochs": data_config["epochs"],
         "regularization": True,
         "optimizer": trial.suggest_categorical("optimizer", ["Adam"]),
