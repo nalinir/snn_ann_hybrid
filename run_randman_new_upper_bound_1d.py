@@ -16,7 +16,8 @@ models = [
     "Hybrid_RNN_SNN_rec",
     "Hybrid_RNN_SNN_V1_same_layer",
 ]
-    
+
+
 def main():
     parser = argparse.ArgumentParser(description="Optuna + WandB tuning for SNN models")
     parser.add_argument(
@@ -39,7 +40,9 @@ def main():
         device = torch.device("cpu")
 
     # Load data
-    train_loader, test_loader, val_loader = data_split_randman(data_config, device, dim_manifold=1)
+    train_loader, test_loader, val_loader = data_split_randman(
+        data_config, device, dim_manifold=1
+    )
 
     for model_name in models:
         best_val_acc = -np.inf
@@ -50,7 +53,9 @@ def main():
             allowed_recurrents = [True]
 
         for recurrent_setting in allowed_recurrents:
-            print(f"Running optimization for model: {model_name}, recurrent={recurrent_setting}")
+            print(
+                f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
+            )
 
             study = optuna.create_study(direction="maximize")
 
@@ -84,7 +89,7 @@ def main():
                     "model_name": model_name,
                     "recurrent_setting": recurrent_setting,
                     **best_trial.params,
-                    "best_val_acc": best_val_acc
+                    "best_val_acc": best_val_acc,
                 }
             save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman_1d"
             os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
@@ -94,11 +99,13 @@ def main():
             os.makedirs(model_save_dir, exist_ok=True)
             config_path = os.path.join(model_save_dir, "config.json")
             if os.path.exists(config_path):
-                with open(config_path, 'rb') as f:
+                with open(config_path, "rb") as f:
                     saved_data = pickle.load(f)
-                    val_acc = saved_data['best_val_acc']
+                    val_acc = saved_data["best_val_acc"]
                     if val_acc > best_val_acc:
-                        print(f"Best val acc {val_acc} is greater than current best {best_val_acc}. Not saving.")
+                        print(
+                            f"Best val acc {val_acc} is greater than current best {best_val_acc}. Not saving."
+                        )
                         continue
 
             if best_history and best_config:
@@ -121,6 +128,7 @@ def main():
                 print(f"Saved config to {config_path}")
             else:
                 print(f"No valid results for {model_name}")
+
 
 if __name__ == "__main__":
     main()

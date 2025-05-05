@@ -16,7 +16,8 @@ models = [
     "Hybrid_RNN_SNN_rec",
     "Hybrid_RNN_SNN_V1_same_layer",
 ]
-    
+
+
 def main():
     parser = argparse.ArgumentParser(description="Optuna + WandB tuning for SNN models")
     parser.add_argument(
@@ -39,7 +40,9 @@ def main():
         device = torch.device("cpu")
 
     # Load data
-    train_loader, test_loader, val_loader = data_split_nmnist(data_config, device, dim_manifold=1)
+    train_loader, test_loader, val_loader = data_split_nmnist(
+        data_config, device, dim_manifold=1
+    )
 
     for model_name in models:
         best_val_acc = -np.inf
@@ -50,7 +53,9 @@ def main():
             allowed_recurrents = [True]
 
         for recurrent_setting in allowed_recurrents:
-            print(f"Running optimization for model: {model_name}, recurrent={recurrent_setting}")
+            print(
+                f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
+            )
 
             study = optuna.create_study(direction="maximize")
 
@@ -84,7 +89,7 @@ def main():
                     "model_name": model_name,
                     "recurrent_setting": recurrent_setting,
                     **best_trial.params,
-                    "best_val_acc": best_val_acc
+                    "best_val_acc": best_val_acc,
                 }
             save_dir = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/nmnist"
             os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
@@ -111,6 +116,7 @@ def main():
                 print(f"Saved config to {config_path}")
             else:
                 print(f"No valid results for {model_name}")
+
 
 if __name__ == "__main__":
     main()

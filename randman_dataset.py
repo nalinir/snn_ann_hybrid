@@ -188,18 +188,23 @@ def data_split_randman(config, device, dim_manifold=1):
     test_data = TensorDataset(x_test, y_test)
 
     train_loader = DataLoader(
-        train_data, batch_size=batch_size_per_class * config["nb_outputs"], shuffle=True, 
+        train_data,
+        batch_size=batch_size_per_class * config["nb_outputs"],
+        shuffle=True,
         drop_last=True,
-
     )
 
     test_loader = DataLoader(
-        test_data, batch_size=batch_size_per_class * config["nb_outputs"], shuffle=False,
-        drop_last=True,    
+        test_data,
+        batch_size=batch_size_per_class * config["nb_outputs"],
+        shuffle=False,
+        drop_last=True,
     )
 
     val_loader = DataLoader(
-        val_data, batch_size=batch_size_per_class * config["nb_outputs"], shuffle=False,
+        val_data,
+        batch_size=batch_size_per_class * config["nb_outputs"],
+        shuffle=False,
         drop_last=True,
     )
 
