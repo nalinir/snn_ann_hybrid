@@ -66,12 +66,15 @@ def main():
     os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
 
     for model_name in models:
-
         allowed_recurrents = [True, False]
         if model_name == "Hybrid_RNN_SNN_V1_same_layer":
             allowed_recurrents = [True]
 
         for recurrent_setting in allowed_recurrents:
+            best_history = None
+            best_config = None
+            best_weights = None
+            best_3d_landscape = None
             print(
                 f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
             )
@@ -125,7 +128,7 @@ def main():
                 }
                 best_3d_landscape = best_trial.user_attrs["3d_landscape"]
 
-            if best_history and best_config:
+            if best_history and best_config and best_weights and best_3d_landscape:
                 # Save history
                 history_path = os.path.join(model_save_dir, "history.pkl")
                 with open(history_path, "wb") as f:
