@@ -1,0 +1,2 @@
+optuna_results/shd filter=lfs diff=lfs merge=lfs -text
+optuna_results/shd/SNN_rec_True/history.pkl filter=lfs diff=lfs merge=lfs -text
