@@ -306,7 +306,9 @@ def objective(
     project_name,
 ):
     # Use original distribution styles from the WandB sweep config
-
+    config = {}
+    optimizer = trial.suggest_categorical("optimizer", ["Adam", "SGD"])
+    config["optimizer"] = optimizer
     config = {
         "model_name": model_name,
         "l2_lower": data_config["nb_hidden"],
@@ -319,13 +321,19 @@ def objective(
             "l2_upper", [0, 1, data_config["nb_hidden"]]
         ),
         "v2_upper": trial.suggest_int("v2_upper", 0, data_config["nb_hidden"]),
-        "learning_rate": trial.suggest_categorical("learning_rate", [2e-3]),
+        "learning_rate": (
+            trial.suggest_float("learning_rate", 1e-4, 2e-3, log=True) 
+            if optimizer == "Adam" 
+            else trial.suggest_float("learning_rate", 1e-2, 0.5, log=True)
+        ),
         "epochs": data_config["epochs"],
+        "optimizer": optimizer,
         "regularization": True,
-        "optimizer": trial.suggest_categorical("optimizer", ["Adam"]),
+        "momentum": trial.suggest_float("momentum", 0.0, 0.99) if config["optimizer"] == "SGD" else 0.0,
         "recurrent": recurrent_setting,  # <- use the fixed value
         "zenke_actual": True,
     }
+
 
     run_name = (
         f"{model_name}-recurrent_{config['recurrent']}-"
