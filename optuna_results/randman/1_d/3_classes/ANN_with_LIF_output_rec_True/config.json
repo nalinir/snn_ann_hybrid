@@ -1,0 +1,12 @@
+{
+  "model_name": "ANN_with_LIF_output",
+  "recurrent_setting": true,
+  "optimizer": "SGD",
+  "l1_upper": 3,
+  "v1_upper": 5,
+  "l2_upper": 0,
+  "v2_upper": 0,
+  "learning_rate": 0.11410015009822043,
+  "momentum": 0.5952923609562567,
+  "best_val_acc": 0.86328125
+}
