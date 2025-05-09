@@ -35,6 +35,9 @@ def arg_parser():
         "--dim_manifold", type=int, default=None, help="only relevant for randman"
     )
     parser.add_argument(
+        "--num_classes", type=int, default=None, help="only relevant for randman"
+    )
+    parser.add_argument(
         "--n_trials", type=int, default=20, help="Should be >100 for full sweep"
     )
     return parser.parse_args()
@@ -43,8 +46,13 @@ def arg_parser():
 def main():
     args = arg_parser()
     data, dim_manifold, n_trials = args.data, args.dim_manifold, args.n_trials
+    num_classes = args.num_classes
     with open(f"{data}_config.json", "r") as f:
         data_config = json.load(f)
+    if num_classes != None:
+        data_config["num_classes"] = num_classes
+    else:
+        num_classes = data_config["num_classes"]
 
     # Select device
     if torch.cuda.is_available():
@@ -61,7 +69,7 @@ def main():
 
     # For saving the models
     save_dir = (
-        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d"
+        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d/{num_classes}_classes/"
     )
     os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
 
@@ -104,7 +112,7 @@ def main():
                     val_loader,
                     test_loader,
                     recurrent_setting,
-                    f"Optuna_{data}_v4_{dim_manifold}d_with_landscape",
+                    f"Optuna_{data}_v4_{dim_manifold}d_with_landscape_{num_classes}classes",
                     # save_dir,
                 )
 

@@ -281,7 +281,7 @@ def train_and_evaluate(
         recurrent=config['recurrent'],
         snn_mask=snn_mask,
         ).to(device)
-    fig2d, fig3d = visualize_loss_landscape_3d(
+    fig3d, fig2d = visualize_loss_landscape_3d(
         model=model_wrapper,
         criterion=nn.NLLLoss(),
         dataloader=test_loader,
