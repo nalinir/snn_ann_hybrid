@@ -3,10 +3,10 @@
   "recurrent_setting": false,
   "optimizer": "SGD",
   "l1_upper": 3,
-  "v1_upper": 5,
-  "l2_upper": 4,
-  "v2_upper": 3,
-  "learning_rate": 0.08032503198616306,
-  "momentum": 0.27287597185895673,
-  "best_val_acc": 0.86328125
+  "v1_upper": 6,
+  "l2_upper": 1,
+  "v2_upper": 1,
+  "learning_rate": 0.0656347470170767,
+  "momentum": 0.5858636492616905,
+  "best_val_acc": 0.89453125
 }
