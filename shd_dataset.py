@@ -4,7 +4,6 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-
 def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
     timestamps = spike_events["t"] / 1e6
