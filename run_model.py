@@ -7,7 +7,7 @@ import numpy as np
 import os
 import pickle
 
-# from nmnist_dataset import data_split_nmnist
+from nmnist_dataset import data_split_nmnist
 from randman_dataset import data_split_randman
 from shd_dataset import data_split_shd
 
@@ -23,6 +23,7 @@ models = [
 data_loaders = {
     "randman": data_split_randman,
     "shd": data_split_shd,
+    "nmnist": data_split_nmnist,
 }
 
 
@@ -50,9 +51,9 @@ def main():
     with open(f"{data}_config.json", "r") as f:
         data_config = json.load(f)
     if num_classes != None:
-        data_config["num_classes"] = num_classes
+        data_config["nb_inputs"] = num_classes
     else:
-        num_classes = data_config["num_classes"]
+        num_classes = data_config["nb_inputs"]
 
     # Select device
     if torch.cuda.is_available():
