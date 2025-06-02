@@ -1,12 +1,12 @@
 {
-    "nb_inputs": 700,
-    "nb_hidden": 200,
+    "nb_inputs": 70,
+    "nb_hidden": 1024,
     "nb_outputs": 20,
     "time_step": 0.001,
     "nb_steps": 100,
     "max_time": 1.4,
-    "tau_mem": 0.01,
-    "tau_syn": 0.005,
+    "tau_mem": 0.08,
+    "tau_syn": 0.04,
     "batch_size": 20,
     "epochs": 40
   }
