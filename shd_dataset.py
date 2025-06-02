@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader, TensorDataset, Subset
 import numpy as np
 from sklearn.model_selection import train_test_split
 
+# Gemini used to fix a gpu error
+
 def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
     timestamps = spike_events["t"] / 1e6
@@ -11,16 +13,10 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
     units_fired = spike_events["x"]
     polarities = spike_events["p"]
 
-    # spike_counts = np.zeros(nb_units, dtype=np.int32)
-    # max_spikes_per_unit = 30
-
     for t, unit, p in zip(timestamps, units_fired, polarities):
-        # if spike_counts[unit] >= max_spikes_per_unit:
-        #     continue
         time_bin = int(round(t * time_step))
         if 0 <= time_bin < nb_steps and 0 <= unit < nb_units:
             spike_train[time_bin, unit] += 1.0
-            # spike_counts[unit] += 1
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
@@ -28,7 +24,7 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
 def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
     """
     Splits the Spiking Heidelberg Digits (SHD) dataset into training, validation,
-    and test sets.  This version ensures all data handling and processing,
+    and test sets. This version ensures all data handling and processing,
     including the data loading and tensor operations, utilize the specified device
     (defaults to CPU, but should be set to 'cuda' for GPU).
 
@@ -62,8 +58,8 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
 
     time_step = config["nb_steps"] / config["max_time"]
 
-    # Preprocess data and move to device
-    def preprocess_and_move(dataset, indices):
+    # Preprocess data and KEEP IT ON CPU
+    def preprocess_only_cpu(dataset, indices):
         x_data = torch.stack(
             [
                 preprocess_spike_events(
@@ -75,28 +71,30 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
                 )
                 for i in indices
             ]
-        ).to(device)
+        ) # REMOVED .to(device)
         y_tensor = torch.tensor(
             [dataset[i][1] for i in indices], dtype=torch.int64
-        ).to(device)
+        ) # REMOVED .to(device)
         return x_data, y_tensor
 
-    train_x_data, train_y_tensor = preprocess_and_move(train_dataset, train_indices)
-    val_x_data, val_y_tensor = preprocess_and_move(train_dataset, val_indices)
-    test_x_data, test_y_tensor = preprocess_and_move(test_dataset, test_subset_indices)
+    train_x_data, train_y_tensor = preprocess_only_cpu(train_dataset, train_indices)
+    val_x_data, val_y_tensor = preprocess_only_cpu(train_dataset, val_indices)
+    test_x_data, test_y_tensor = preprocess_only_cpu(test_dataset, test_subset_indices)
 
 
     train_tensor_dataset = TensorDataset(train_x_data, train_y_tensor)
     val_tensor_dataset = TensorDataset(val_x_data, val_y_tensor)
     test_data = TensorDataset(test_x_data, test_y_tensor)
 
+    # DataLoaders are configured. pin_memory=True is fine here
+    # because it will pin the *CPU* memory for faster transfer later.
     train_loader = DataLoader(
         train_tensor_dataset,
         batch_size=config["batch_size"],
         shuffle=True,
-        pin_memory=True,  # Keep this for potentially faster host-to-device transfer
+        pin_memory=True,
         drop_last=True,
-        num_workers=2, # You can increase this if you have more CPU cores
+        num_workers=2,
     )
     val_loader = DataLoader(
         val_tensor_dataset,
@@ -115,14 +113,26 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
         num_workers=2,
     )
 
+    # The following block for printing class distribution and spike info
+    # might still try to iterate over the loader.
+    # When iterating, if 'device' is 'cuda', this will now work fine
+    # because the DataLoader is serving CPU tensors, and you will move them
+    # to CUDA within the loop or specifically for printing.
+
+    # Example of how you should move to device in your main training loop:
+    # for batch_idx, (data, target) in enumerate(train_loader):
+    #     data, target = data.to(device), target.to(device) # <--- Move to GPU HERE!
+    #     # ... rest of your training logic
+
     for loader, name in [
         (train_loader, "Train"),
         (val_loader, "Validation"),
         (test_loader, "Test"),
     ]:
         all_labels = []
+        # When iterating the loader, y_batch is now on CPU
         for _, y_batch in loader:
-            all_labels.extend(y_batch.cpu().numpy()) # Bring back to CPU for numpy
+            all_labels.extend(y_batch.numpy()) # .cpu() is no longer strictly needed if on CPU
         print(
             f"{name} class distribution:",
             np.bincount(all_labels, minlength=config["nb_outputs"]),
@@ -133,9 +143,11 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
     print("Total spikes in first batch:", X_batch.sum().item())
     print("Spikes per sample:", X_batch.sum(dim=(1, 2)))
     spikes_per_bin = X_batch.sum(dim=(0, 2))
-    print("Spikes per time bin:", spikes_per_bin.cpu().numpy()) # Bring back to CPU for numpy
+    # No .cpu() needed if X_batch is already on CPU
+    print("Spikes per time bin:", spikes_per_bin.numpy())
     print(
-        "Average spikes per time bin per unit:", X_batch.mean(dim=0).mean(dim=1).cpu().numpy() # Bring back to CPU for numpy
+        "Average spikes per time bin per unit:", X_batch.mean(dim=0).mean(dim=1).numpy()
     )
+
 
     return train_loader, val_loader, test_loader
