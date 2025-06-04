@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-from loss_landscape import visualize_loss_landscape_3d, HybridNet
+from loss_landscape import visualize_loss_landscape_3d, HybridNet, hidden_layer_visualization
 from functools import partial
 from surrogate_gradient import SurrGradSpike
 from models import (
@@ -43,6 +43,7 @@ def bound_regularizer(spk, v_t, l_t, l1, upper_bound=True, population_level=True
         cnt = torch.mean(spk, dim=0)
     reg = torch.relu(multiplier * (cnt - v_t))
     return l_t * (torch.mean(torch.abs(reg)) if l1 else torch.mean(torch.square(reg)))
+    
 
 
 def regularization_loss_zenke(spks, config):
@@ -112,7 +113,8 @@ def run_epoch(
         m, _ = torch.max(output, dim=1)
         logp = log_softmax(m)
         loss = loss_fn(logp, y)
-        if config["regularization"] == False and model != ANN_with_LIF_output:
+
+        if config["regularization"] == True and model != ANN_with_LIF_output:
             bin_spks = (spks > 0).float()
             loss += (
                 regularization_loss_zenke(bin_spks, config)
@@ -289,9 +291,19 @@ def train_and_evaluate(
         device=device,
         wandb_run=wandb_run,
     )
+    hidden_layer_clustering, coefficient_metrics = hidden_layer_visualization(
+        model=model_wrapper,
+        data_config=data_config,
+        dataloader=test_loader,
+        wandb_run=wandb_run,
+    )
+    
+    # Add coefficient metrics to history
+    history["clustering_coefficients"] = coefficient_metrics
+
     # Save the visualizations to wandb
 
-    return history, w1, w2, v1, fig2d, fig3d
+    return history, w1, w2, v1, fig2d, fig3d, hidden_layer_clustering
 
 
 def objective(
@@ -345,7 +357,7 @@ def objective(
 
     with wandb.init(project=project_name, config=config, name=run_name):
         model_class = function_mappings[model_name]
-        history, w1, w2, v1, fig2d, fig3d = train_and_evaluate(
+        history, w1, w2, v1, fig2d, fig3d, hidden_layer_clustering = train_and_evaluate(
             model_class,
             train_loader,
             val_loader,
@@ -367,5 +379,8 @@ def objective(
     )  # store the weights inside the trial for later if needed
     trial.set_user_attr(
         "3d_landscape", fig3d
+    )  # store the model name inside the trial for later if needed
+    trial.set_user_attr(
+        "hidden_layer_clustering", hidden_layer_clustering
     )  # store the model name inside the trial for later if needed
     return final_val_acc

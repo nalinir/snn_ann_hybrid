@@ -3,25 +3,39 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset, Subset
 import numpy as np
 from sklearn.model_selection import train_test_split
+from tonic import transforms
+
 
 # Gemini used to fix a gpu error
 
+
 def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
-    timestamps = spike_events["t"] / 1e6
+    print(f"Processing spike events with {len(spike_events)} events, ")
+    # print(f"Expected shape: ({nb_steps}, {nb_units})")
+    # print(f"Shape: {spike_events.shape}, ")
+
+    timestamps = spike_events["t"]/1e6  # Convert microseconds to seconds
     timestamps = np.clip(timestamps, 0, max_time)
     units_fired = spike_events["x"]
+    max_unit = np.max(units_fired)
     polarities = spike_events["p"]
+    conversion_unit_bin = nb_units/700
+    spike_counts = np.zeros(nb_units, dtype=np.int32)
+    max_spikes_per_unit = 30
 
-    for t, unit, p in zip(timestamps, units_fired, polarities):
+    for t, p, unit in spike_events:
+        if spike_counts[unit] >= max_spikes_per_unit:
+            continue
         time_bin = int(round(t * time_step))
-        if 0 <= time_bin < nb_steps and 0 <= unit < nb_units:
-            spike_train[time_bin, unit] += 1.0
+        # time_bin = int(t)
+        unit_bin = int(unit / conversion_unit_bin)
+        spike_train[time_bin, unit_bin] += 1.0
 
     return torch.tensor(spike_train, dtype=torch.float32)
 
 
-def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
+def data_split_shd(config, device=torch.device("cpu"), dim_manifold=None):
     """
     Splits the Spiking Heidelberg Digits (SHD) dataset into training, validation,
     and test sets. This version ensures all data handling and processing,
@@ -42,11 +56,41 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
         tuple: A tuple containing the training, validation, and test data loaders
                (torch.utils.data.DataLoader).
     """
-    train_dataset = tonic.datasets.SHD(save_to="./data", train=True)
-    test_dataset = tonic.datasets.SHD(save_to="./data", train=False)
-
+    # Data = tonic.datasets.hsd.SHD
+    # sensor_size = Data.sensor_size[0]
+    # print(f"Sensor size: {sensor_size}")
+    # transform = transforms.Compose(
+    #     [
+    #         transforms.Downsample(spatial_factor=config["nb_inputs"] / sensor_size),
+    #         transforms.CropTime(
+    #             max=(config["max_time"] * 1e6)
+    #         ),  # Convert seconds to microseconds
+    #         transforms.ToFrame(
+    #             sensor_size=(config["nb_inputs"], 1, 1),
+    #             time_window=(config["time_step"] * 1e6),
+    #             include_incomplete=True,
+    #         ),
+    #         # For the polarity channel - not used
+    #         lambda x: x.squeeze(1),
+    #     ]
+    # )
+    train_dataset = tonic.datasets.SHD(
+        save_to="./data", train=True, 
+        # transform=transform
+    )
+    test_dataset = tonic.datasets.SHD(
+        save_to="./data", train=False, 
+        # transform=transform
+    )
+    print(f"Train dataset size: {len(train_dataset)}")
+    print(f"Test dataset size: {len(test_dataset)}")
     train_subset_indices = list(range(len(train_dataset)))
     test_subset_indices = list(range(len(test_dataset)))
+
+    sample_x, sample_y = train_dataset[0]    
+    print(f"Train dataset sample 0 (x) shape AFTER TRANSFORM: {sample_x.shape}") # Should now be (N, 70)
+    print(f"Train dataset sample 0 (y) label: {sample_y}")
+    print(f"Number of items in sample 0: {len(train_dataset[0])}")
 
     train_labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))])
     train_indices, val_indices = train_test_split(
@@ -56,17 +100,21 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
         random_state=42,
     )
 
-    time_step = config["nb_steps"] / config["max_time"]
+    # train_subset = Subset(train_dataset, train_indices)
+    # val_subset = Subset(train_dataset, val_indices)
+    # test_subset = Subset(test_dataset, test_subset_indices)
 
-    # Preprocess data and KEEP IT ON CPU
+    actual_nb_steps = int(config["max_time"] / config["time_step"])
+
+    # # Preprocess data and KEEP IT ON CPU
     def preprocess_only_cpu(dataset, indices):
         x_data = torch.stack(
             [
                 preprocess_spike_events(
                     dataset[i][0],
-                    config["nb_steps"],
+                    actual_nb_steps,
                     config["nb_inputs"],
-                    time_step,
+                    config["time_step"],
                     config["max_time"],
                 )
                 for i in indices
@@ -81,38 +129,44 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
     val_x_data, val_y_tensor = preprocess_only_cpu(train_dataset, val_indices)
     test_x_data, test_y_tensor = preprocess_only_cpu(test_dataset, test_subset_indices)
 
-
     train_tensor_dataset = TensorDataset(train_x_data, train_y_tensor)
     val_tensor_dataset = TensorDataset(val_x_data, val_y_tensor)
-    test_data = TensorDataset(test_x_data, test_y_tensor)
+    test_tensor_dataset = TensorDataset(test_x_data, test_y_tensor)
 
-    # DataLoaders are configured. pin_memory=True is fine here
-    # because it will pin the *CPU* memory for faster transfer later.
     train_loader = DataLoader(
         train_tensor_dataset,
+        # train_subset,
         batch_size=config["batch_size"],
         shuffle=True,
         pin_memory=True,
         drop_last=True,
-        num_workers=2,
+        # num_workers=2,
+        # collate_fn=tonic.collation.PadTensors(), # Your target sequence length (e.g., 2799),
     )
     val_loader = DataLoader(
         val_tensor_dataset,
+        # val_subset,
         batch_size=config["batch_size"],
         shuffle=False,
         pin_memory=True,
-        drop_last=False,
-        num_workers=2,
+        drop_last=True,
+        # num_workers=2,
+        # collate_fn=tonic.collation.PadTensors(),
     )
     test_loader = DataLoader(
-        test_data,
+        test_tensor_dataset,
+        # test_subset,
         batch_size=config["batch_size"],
         shuffle=False,
         pin_memory=True,
-        drop_last=False,
-        num_workers=2,
+        drop_last=True,
+        # num_workers=2,
+        # collate_fn=tonic.collation.PadTensors(),
     )
 
+
+    # DataLoaders are configured. pin_memory=True is fine here
+    # because it will pin the *CPU* memory for faster transfer later.
     # The following block for printing class distribution and spike info
     # might still try to iterate over the loader.
     # When iterating, if 'device' is 'cuda', this will now work fine
@@ -132,7 +186,9 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
         all_labels = []
         # When iterating the loader, y_batch is now on CPU
         for _, y_batch in loader:
-            all_labels.extend(y_batch.numpy()) # .cpu() is no longer strictly needed if on CPU
+            all_labels.extend(
+                y_batch.numpy()
+            )  # .cpu() is no longer strictly needed if on CPU
         print(
             f"{name} class distribution:",
             np.bincount(all_labels, minlength=config["nb_outputs"]),
@@ -148,6 +204,5 @@ def data_split_shd(config, device=torch.device('cpu'), dim_manifold=None):
     print(
         "Average spikes per time bin per unit:", X_batch.mean(dim=0).mean(dim=1).numpy()
     )
-
 
     return train_loader, val_loader, test_loader
