@@ -6,7 +6,10 @@ import torch.nn as nn
 import wandb
 import torch.nn.functional as F
 from tqdm import tqdm
-
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+# from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import seaborn as sns
 global_min = 0
 global_max = 1
 
@@ -56,7 +59,33 @@ class HybridNet(nn.Module):
         m, _ = out_rec.max(dim=1)
         logp = F.log_softmax(m, dim=1)
         return logp
-
+    def hiddenLayer(self, x):
+        out_rec, other_recs = self.base_forward(
+            x,
+            self.w1,
+            self.w2,
+            self.v1,
+            self.alpha,
+            self.beta,
+            self.spike_fn,
+            self.device,
+            self.recurrent,
+            self.snn_mask,
+        )
+        ## Clean this up once we convert the model to class format
+        result = None
+        print("Other recs: ", len(other_recs))
+        if len(other_recs) == 3:
+            spk_rec, ann_rec = other_recs[1], other_recs[2]
+            # We add them for the next step so do the same here
+            result = spk_rec + ann_rec
+        elif len(other_recs) == 2:
+            spk_rec = other_recs[1]
+            result = spk_rec
+        else:
+            ann_recs = other_recs
+            result = ann_recs
+        return result
 
 def _flatten_params(params):
     """Concatenate all param tensors into one vector, return shapes for unflattening."""
@@ -160,3 +189,70 @@ def visualize_loss_landscape_3d(
     plt.close(fig3d)
     plt.close(fig2d)
     return fig3d, fig2d 
+
+@torch.no_grad()
+def hidden_layer_visualization(
+    model,
+    data_config,
+    dataloader,
+    save_path=None,
+    wandb_run=None
+):
+    """
+    Visualize the hidden layer representation of the model.
+    """
+    # 1) Get the hidden layer representation of the data (these are the spikes)
+    all_hidden_outputs = []
+    all_labels = []
+
+    for data, labels in dataloader:
+        hidden_output = model.hiddenLayer(data)
+        all_hidden_outputs.append(hidden_output.cpu().numpy())
+        all_labels.append(labels.cpu().numpy())
+
+    hidden_outputs_np = np.vstack(all_hidden_outputs)
+    labels_np = np.concatenate(all_labels)
+    print(f"Collected hidden outputs shape: {hidden_outputs_np.shape}")
+    print(f"Collected labels shape: {labels_np.shape}")
+    hidden_output_for_viz = hidden_outputs_np.reshape(hidden_outputs_np.shape[0], -1)
+
+    print(f"Shape of hidden output for visualization: {hidden_output_for_viz.shape}")
+
+    # 2) Use t-SNE to reduce the dimensionality of the hidden layer representation
+    tsne = TSNE(n_components=2, random_state=42)
+    hidden_2d_tsne = tsne.fit_transform(hidden_output_for_viz)
+    # 3) Visualize
+    fig, ax = plt.subplots(figsize=(7, 6)) # You can adjust figsize if needed
+    sns.scatterplot(
+        x=hidden_2d_tsne[:, 0], y=hidden_2d_tsne[:, 1],
+        hue=labels_np, palette=sns.color_palette("tab10", n_colors=data_config['nb_outputs']),
+        legend='full', alpha=0.7, s=10,
+        ax=ax
+    )
+    ax.set_title('SNN Hidden Layer Activations (t-SNE)')
+    ax.set_xlabel('t-SNE Component 1')
+    ax.set_ylabel('t-SNE Component 2')
+    ax.grid(True, linestyle='--', alpha=0.6)
+
+    # Calculate the different scores
+    silhouette_avg = silhouette_score(hidden_output_for_viz, labels_np)
+    print(f"Silhouette Coefficient (using ground-truth labels): {silhouette_avg:.4f}")
+    calinski_harabasz = calinski_harabasz_score(hidden_output_for_viz, labels_np)
+    print(f"Calinski-Harabasz Index (using ground-truth labels): {calinski_harabasz:.4f}")
+    davies_bouldin = davies_bouldin_score(hidden_output_for_viz, labels_np)
+    print(f"Davies-Bouldin Index (using ground-truth labels): {davies_bouldin:.4f}")
+    if wandb_run is not None:
+        wandb_run.log({
+            "t-SNE Visualization": wandb.Image(fig),
+            "Silhouette Coefficient": silhouette_avg,
+            "Calinski-Harabasz Index": calinski_harabasz,
+            "Davies-Bouldin Index": davies_bouldin
+        })
+    coefficient_metrics = {
+        "Silhouette Coefficient": silhouette_avg,
+        "Calinski-Harabasz Index": calinski_harabasz,
+        "Davies-Bouldin Index": davies_bouldin
+    }
+    plt.close(fig) # Close the figure to free up memory if not displaying it
+
+    return fig, coefficient_metrics

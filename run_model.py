@@ -51,9 +51,9 @@ def main():
     with open(f"{data}_config.json", "r") as f:
         data_config = json.load(f)
     if num_classes != None:
-        data_config["nb_inputs"] = num_classes
+        data_config["nb_outputs"] = num_classes
     else:
-        num_classes = data_config["nb_inputs"]
+        num_classes = data_config["nb_outputs"]
 
     # Select device
     if torch.cuda.is_available():
@@ -84,6 +84,7 @@ def main():
             best_config = None
             best_weights = None
             best_3d_landscape = None
+            best_hidden_layer_clustering = None
             print(
                 f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
             )
@@ -136,8 +137,9 @@ def main():
                     "best_val_acc": best_val_acc,
                 }
                 best_3d_landscape = best_trial.user_attrs["3d_landscape"]
+                best_hidden_layer_clustering = best_trial.user_attrs["hidden_layer_clustering"]
 
-            if best_history and best_config and best_weights and best_3d_landscape:
+            if best_history and best_config and best_weights and best_3d_landscape and best_hidden_layer_clustering:
                 # Save history
                 history_path = os.path.join(model_save_dir, "history.pkl")
                 with open(history_path, "wb") as f:
@@ -157,6 +159,10 @@ def main():
                 loss_landscape_path = os.path.join(model_save_dir, "3d_loss_surface.png")
                 best_3d_landscape.savefig(loss_landscape_path)
                 print(f"Saved 3D landscape to {config_path}")
+                best_hidden_layer_clustering_path = os.path.join(model_save_dir, "hidden_layer_clustering.png")
+                best_hidden_layer_clustering.savefig(best_hidden_layer_clustering_path)
+                print(f"Saved 3D landscape to {config_path}")
+
             else:
                 print(f"No valid results for {model_name}")
 
