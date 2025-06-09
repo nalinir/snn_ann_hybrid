@@ -1,5 +1,5 @@
 {
-    "nb_inputs": 700,
+    "nb_inputs": 70,
     "nb_hidden": 200,
     "nb_outputs": 20,
     "time_step": 0.001,

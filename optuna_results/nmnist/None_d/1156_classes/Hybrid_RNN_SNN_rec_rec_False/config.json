@@ -1,0 +1,12 @@
+{
+  "model_name": "Hybrid_RNN_SNN_rec",
+  "recurrent_setting": false,
+  "optimizer": "SGD",
+  "l1_upper": 33,
+  "v1_upper": 269,
+  "l2_upper": 1,
+  "v2_upper": 72,
+  "learning_rate": 0.030957019491938482,
+  "momentum": 0.29387186747569244,
+  "best_val_acc": 0.55
+}

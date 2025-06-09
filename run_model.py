@@ -41,12 +41,15 @@ def arg_parser():
     parser.add_argument(
         "--n_trials", type=int, default=20, help="Should be >100 for full sweep"
     )
+    parser.add_argument(
+        "--loss_type", type=str, help="Simplified, attention, or zenke"
+    )
     return parser.parse_args()
 
 
 def main():
     args = arg_parser()
-    data, dim_manifold, n_trials = args.data, args.dim_manifold, args.n_trials
+    data, dim_manifold, n_trials, loss_type = args.data, args.dim_manifold, args.n_trials, args.loss_type
     num_classes = args.num_classes
     with open(f"{data}_config.json", "r") as f:
         data_config = json.load(f)
@@ -68,9 +71,9 @@ def main():
         data_config, device, dim_manifold=dim_manifold
     )
 
-    # For saving the models
+    # For saving the models - eventually we may want to make loss type a sweep
     save_dir = (
-        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d/{num_classes}_classes/"
+        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d/{num_classes}_classes/{loss_type}"
     )
     os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
 
@@ -84,7 +87,7 @@ def main():
             best_config = None
             best_weights = None
             best_3d_landscape = None
-            best_hidden_layer_clustering = None
+            # best_hidden_layer_clustering = None
             print(
                 f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
             )
@@ -114,7 +117,8 @@ def main():
                     val_loader,
                     test_loader,
                     recurrent_setting,
-                    f"Optuna_{data}_v4_{dim_manifold}d_with_landscape_{num_classes}classes",
+                    f"Optuna_{data}_v4_{dim_manifold}d_with_landscape_{num_classes}classes_{loss_type}",
+                    loss_type=loss_type,
                     # save_dir,
                 )
 
@@ -135,11 +139,13 @@ def main():
                     "recurrent_setting": recurrent_setting,
                     **best_trial.params,
                     "best_val_acc": best_val_acc,
+                    "data_config": data_config, # Added this since we're changing the number of inputs
                 }
                 best_3d_landscape = best_trial.user_attrs["3d_landscape"]
-                best_hidden_layer_clustering = best_trial.user_attrs["hidden_layer_clustering"]
+                # best_hidden_layer_clustering = best_trial.user_attrs["hidden_layer_clustering"]
 
-            if best_history and best_config and best_weights and best_3d_landscape and best_hidden_layer_clustering:
+            if best_history and best_config and best_weights and best_3d_landscape: 
+                # and best_hidden_layer_clustering:
                 # Save history
                 history_path = os.path.join(model_save_dir, "history.pkl")
                 with open(history_path, "wb") as f:
@@ -159,9 +165,9 @@ def main():
                 loss_landscape_path = os.path.join(model_save_dir, "3d_loss_surface.png")
                 best_3d_landscape.savefig(loss_landscape_path)
                 print(f"Saved 3D landscape to {config_path}")
-                best_hidden_layer_clustering_path = os.path.join(model_save_dir, "hidden_layer_clustering.png")
-                best_hidden_layer_clustering.savefig(best_hidden_layer_clustering_path)
-                print(f"Saved 3D landscape to {config_path}")
+                # best_hidden_layer_clustering_path = os.path.join(model_save_dir, "hidden_layer_clustering.png")
+                # best_hidden_layer_clustering.savefig(best_hidden_layer_clustering_path)
+                # print(f"Saved 3D landscape to {config_path}")
 
             else:
                 print(f"No valid results for {model_name}")
