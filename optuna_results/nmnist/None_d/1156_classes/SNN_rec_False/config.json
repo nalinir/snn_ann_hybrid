@@ -1,0 +1,12 @@
+{
+  "model_name": "SNN",
+  "recurrent_setting": false,
+  "optimizer": "SGD",
+  "l1_upper": 59,
+  "v1_upper": 23,
+  "l2_upper": 100,
+  "v2_upper": 57,
+  "learning_rate": 0.04456822199696428,
+  "momentum": 0.7695354719795018,
+  "best_val_acc": 0.55
+}

@@ -1,0 +1,22 @@
+{
+  "model_name": "SNN",
+  "recurrent_setting": true,
+  "optimizer": "SGD",
+  "l1_upper": 1,
+  "v1_upper": 5,
+  "l2_upper": 0,
+  "v2_upper": 1,
+  "learning_rate": 0.04475493164601595,
+  "momentum": 0.6899901538542279,
+  "best_val_acc": 0.84765625,
+  "data_config": {
+    "nb_inputs": 100,
+    "nb_hidden": 4,
+    "nb_outputs": 2,
+    "time_step": 0.001,
+    "epochs": 300,
+    "nb_steps": 200,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005
+  }
+}

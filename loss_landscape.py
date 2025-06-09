@@ -191,6 +191,49 @@ def visualize_loss_landscape_3d(
     return fig3d, fig2d 
 
 @torch.no_grad()
+def clustering_metrics_calc(
+    model,
+    data_config,
+    dataloader,
+    save_path=None,
+    wandb_run=None
+):
+    # 1) Get the hidden layer representation of the data (these are the spikes)
+    all_hidden_outputs = []
+    all_labels = []
+
+    for data, labels in dataloader:
+        hidden_output = model.hiddenLayer(data)
+        all_hidden_outputs.append(hidden_output.cpu().numpy())
+        all_labels.append(labels.cpu().numpy())
+    hidden_outputs_np = np.vstack(all_hidden_outputs)
+    labels_np = np.concatenate(all_labels)
+    print(f"Collected hidden outputs shape: {hidden_outputs_np.shape}")
+    print(f"Collected labels shape: {labels_np.shape}")
+    hidden_output_for_viz = hidden_outputs_np.reshape(hidden_outputs_np.shape[0], -1)
+    # 2) Metrics
+    silhouette_avg = silhouette_score(hidden_output_for_viz, labels_np)
+    print(f"Silhouette Coefficient (using ground-truth labels): {silhouette_avg:.4f}")
+    calinski_harabasz = calinski_harabasz_score(hidden_output_for_viz, labels_np)
+    print(f"Calinski-Harabasz Index (using ground-truth labels): {calinski_harabasz:.4f}")
+    davies_bouldin = davies_bouldin_score(hidden_output_for_viz, labels_np)
+    print(f"Davies-Bouldin Index (using ground-truth labels): {davies_bouldin:.4f}")
+
+    if wandb_run is not None:
+        wandb_run.log({
+            "Silhouette Coefficient": silhouette_avg,
+            "Calinski-Harabasz Index": calinski_harabasz,
+            "Davies-Bouldin Index": davies_bouldin
+        })
+    clustering_metrics = {
+        "Silhouette Coefficient": silhouette_avg,
+        "Calinski-Harabasz Index": calinski_harabasz,
+        "Davies-Bouldin Index": davies_bouldin
+    }
+
+    return hidden_output_for_viz, labels_np, clustering_metrics
+
+@torch.no_grad()
 def hidden_layer_visualization(
     model,
     data_config,
@@ -201,23 +244,14 @@ def hidden_layer_visualization(
     """
     Visualize the hidden layer representation of the model.
     """
-    # 1) Get the hidden layer representation of the data (these are the spikes)
-    all_hidden_outputs = []
-    all_labels = []
-
-    for data, labels in dataloader:
-        hidden_output = model.hiddenLayer(data)
-        all_hidden_outputs.append(hidden_output.cpu().numpy())
-        all_labels.append(labels.cpu().numpy())
-
-    hidden_outputs_np = np.vstack(all_hidden_outputs)
-    labels_np = np.concatenate(all_labels)
-    print(f"Collected hidden outputs shape: {hidden_outputs_np.shape}")
-    print(f"Collected labels shape: {labels_np.shape}")
-    hidden_output_for_viz = hidden_outputs_np.reshape(hidden_outputs_np.shape[0], -1)
-
-    print(f"Shape of hidden output for visualization: {hidden_output_for_viz.shape}")
-
+    # 1) Get the hidden layer representation of the data and related metrics
+    hidden_output_for_viz, labels_np, clustering_metrics = clustering_metrics_calc(
+        model,
+        data_config,
+        dataloader,
+        save_path=save_path,
+        wandb_run=wandb_run
+    )
     # 2) Use t-SNE to reduce the dimensionality of the hidden layer representation
     tsne = TSNE(n_components=2, random_state=42)
     hidden_2d_tsne = tsne.fit_transform(hidden_output_for_viz)
@@ -234,25 +268,10 @@ def hidden_layer_visualization(
     ax.set_ylabel('t-SNE Component 2')
     ax.grid(True, linestyle='--', alpha=0.6)
 
-    # Calculate the different scores
-    silhouette_avg = silhouette_score(hidden_output_for_viz, labels_np)
-    print(f"Silhouette Coefficient (using ground-truth labels): {silhouette_avg:.4f}")
-    calinski_harabasz = calinski_harabasz_score(hidden_output_for_viz, labels_np)
-    print(f"Calinski-Harabasz Index (using ground-truth labels): {calinski_harabasz:.4f}")
-    davies_bouldin = davies_bouldin_score(hidden_output_for_viz, labels_np)
-    print(f"Davies-Bouldin Index (using ground-truth labels): {davies_bouldin:.4f}")
     if wandb_run is not None:
         wandb_run.log({
             "t-SNE Visualization": wandb.Image(fig),
-            "Silhouette Coefficient": silhouette_avg,
-            "Calinski-Harabasz Index": calinski_harabasz,
-            "Davies-Bouldin Index": davies_bouldin
         })
-    coefficient_metrics = {
-        "Silhouette Coefficient": silhouette_avg,
-        "Calinski-Harabasz Index": calinski_harabasz,
-        "Davies-Bouldin Index": davies_bouldin
-    }
     plt.close(fig) # Close the figure to free up memory if not displaying it
 
     return fig, coefficient_metrics

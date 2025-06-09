@@ -1,22 +1,5 @@
 import torch
 
-def parameter_free_attention(mem):
-    # Input current should be the membrane potential for a given neuron
-    # Threshold is 1 for this model (just don't do mthr)
-    # Other should be 0
-    if mem.ndim != 1:
-        raise ValueError("Input tensor must be 1-dimensional.")
-    
-    n = arr_torch.numel() # Number of elements in the tensor
-
-    first_part = (1-mem)**2
-    # This is just the resulting membrane potential from all other neurons other than a given neuron
-    second_part_interim = (0-mem)**2
-    total_sum_mem = torch.sum(second_part_interim)
-    second_part = (total_sum_mem - second_part_interim)/(n-1)
-    # We take all except a given index and then take the mean
-    return second_part + first_part
-
 
 def SNN(inputs, w1, w2, v1, alpha, beta, spike_fn, device, recurrent, snn_mask):
     inputs = inputs.to(device)

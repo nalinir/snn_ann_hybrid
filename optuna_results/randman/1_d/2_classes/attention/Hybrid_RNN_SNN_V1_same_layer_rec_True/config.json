@@ -1,0 +1,22 @@
+{
+  "model_name": "Hybrid_RNN_SNN_V1_same_layer",
+  "recurrent_setting": true,
+  "optimizer": "Adam",
+  "l1_upper": 4,
+  "v1_upper": 5,
+  "l2_upper": 0,
+  "v2_upper": 3,
+  "learning_rate": 0.00024396291199875057,
+  "l2": 6.898975190643285e-06,
+  "best_val_acc": 0.50390625,
+  "data_config": {
+    "nb_inputs": 100,
+    "nb_hidden": 4,
+    "nb_outputs": 2,
+    "time_step": 0.001,
+    "epochs": 300,
+    "nb_steps": 200,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005
+  }
+}

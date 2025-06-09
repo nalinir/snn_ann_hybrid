@@ -1,0 +1,23 @@
+{
+  "model_name": "Hybrid_RNN_SNN_rec",
+  "recurrent_setting": true,
+  "optimizer": "SGD",
+  "l1_upper": 4,
+  "v1_upper": 5,
+  "l2_upper": 1,
+  "v2_upper": 4,
+  "learning_rate": 0.1327558458165242,
+  "momentum": 0.8819834249300361,
+  "l2": 0.07200561106212827,
+  "best_val_acc": 0.49609375,
+  "data_config": {
+    "nb_inputs": 100,
+    "nb_hidden": 4,
+    "nb_outputs": 2,
+    "time_step": 0.001,
+    "epochs": 300,
+    "nb_steps": 200,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005
+  }
+}

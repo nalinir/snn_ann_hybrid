@@ -1,0 +1,23 @@
+{
+  "model_name": "ANN_with_LIF_output",
+  "recurrent_setting": true,
+  "optimizer": "SGD",
+  "l1_upper": 4,
+  "v1_upper": 2,
+  "l2_upper": 4,
+  "v2_upper": 3,
+  "learning_rate": 0.06364367168851333,
+  "momentum": 0.042577862460438265,
+  "l2": 0.0011660462365401798,
+  "best_val_acc": 0.96484375,
+  "data_config": {
+    "nb_inputs": 100,
+    "nb_hidden": 4,
+    "nb_outputs": 2,
+    "time_step": 0.001,
+    "epochs": 300,
+    "nb_steps": 200,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005
+  }
+}

@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn
-from loss_landscape import visualize_loss_landscape_3d, HybridNet, hidden_layer_visualization
+from loss_landscape import visualize_loss_landscape_3d, HybridNet, clustering_metrics_calc
 from functools import partial
 from surrogate_gradient import SurrGradSpike
 from models import (
@@ -18,7 +18,51 @@ function_mappings = {
     "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
 }
+# -- Percent Spiking Metrics --
+# Sample level
+def percent_of_neurons_spiking_per_sample(spk, model):
+    # Aggregate spikes for each neuron across the batch
+    # spk should be of shape (T, batch, N)
+    print(f"spk shape: {spk.shape}")
+    spk_sum = torch.sum(spk, dim=0)  # Shape: (batch, N)
+    print(f"spk_sum shape: {spk_sum.shape}")
+    spk_count_greater_than_zero = (spk_sum > 0).float()  # Shape: (batch, N)
+    spk_sum_greater_0 = torch.mean(spk_count_greater_than_zero, dim=1)  # Shape: (batch,)
+    print(f"spk_sum_greater_0 shape: {spk_sum_greater_0.shape}")
+    if model == Hybrid_RNN_SNN_rec or model == Hybrid_RNN_SNN_V1_same_layer:
+        # For hybrid models, multiply by 2 since half will not be spiking
+        spk_sum_greater_0 *= 2
+    return spk_sum_greater_0
 
+# --- Attention Mechanism Loss ---
+def parameter_free_attention(mem, n):
+    # Input current should be the membrane potential for a given neuron
+    # Threshold is 1 for this model (just don't do mthr)
+    # Other should be 0
+
+
+    # The membrane potential for each timestep has shape (batch, nb_hidden)
+    first_part = (1-mem)**2
+    # This is just the resulting membrane potential from all other neurons other than a given neuron
+    second_part_interim = (0-mem)**2
+    total_sum_mem = torch.sum(second_part_interim)
+    second_part = (total_sum_mem - second_part_interim)/(n-1)
+    # We take all except a given index and then take the mean
+    return second_part + first_part
+
+def attention_loss(mem, w1, n, config):
+    """
+    Computes the attention loss with L2 regularization.
+    """
+    # mem should be of shape (batch, nb_hidden)
+    # n is the number of neurons in the layer
+    ## To allow for L2 regularization for model
+    if mem is None:
+        attn_loss = 0
+    else:
+        attn_loss = torch.sum(parameter_free_attention(mem, n))
+    l2_loss = torch.sum(config["l2"] * (w1**2))
+    return attn_loss + l2_loss
 
 # --- Utility Functions for Spike & Voltage Metrics ---
 def neurons_spiking_per_timestep(spk_tensor):
@@ -92,6 +136,7 @@ def run_epoch(
     total_spikes = 0
     spike_tensors = [] if save_spikes else None
     voltage_tensors = [] if save_voltages else None
+    percent_spiking = []
 
     snn_mask = torch.zeros((data_config["nb_hidden"],), device=device)
     snn_mask[: data_config["nb_hidden"] // 2] = 1.0
@@ -113,20 +158,26 @@ def run_epoch(
         m, _ = torch.max(output, dim=1)
         logp = log_softmax(m)
         loss = loss_fn(logp, y)
-
+        # This is only spike regularization
+        print(config["regularization"], config["zenke_actual"])
         if config["regularization"] == True and model != ANN_with_LIF_output:
             bin_spks = (spks > 0).float()
             loss += (
                 regularization_loss_zenke(bin_spks, config)
-                if config["zenke_actual"] == False
+                if config["zenke_actual"] == True
                 else regularization_loss_original(bin_spks, config)
             )
             # track metrics
+        if config["parameter_free_attention"]:
+            loss += attention_loss(
+                volt, w1, data_config["nb_hidden"], config
+            )
         if save_spikes and spks is not None:
             spike_tensors.append(spks.detach().cpu())
         if spks is not None:
             per_timestep_spike_counts.append(neurons_spiking_per_timestep(spks))
             total_spikes += total_spike_count(spks)
+            percent_spiking.append(percent_of_neurons_spiking_per_sample(spks, model))
 
         if save_voltages and volt is not None:
             voltage_tensors.append(volt.detach().cpu())
@@ -140,12 +191,16 @@ def run_epoch(
         _, pred = torch.max(m, 1)
         all_preds.extend(pred.cpu().numpy())
         all_labels.extend(y.cpu().numpy())
-
+    
+    # Stack all the tensors in the list of shape (batch,)
+    percent_spiking = torch.cat(percent_spiking) if percent_spiking else []
     avg_loss = total_loss / len(data_loader)
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))
     if spks is not None:
         per_timestep_spike_counts = np.concatenate(per_timestep_spike_counts)
-
+        avg_percent_spiking = torch.mean(percent_spiking)
+    else:
+        avg_percent_spiking = 0.0
     return (
         avg_loss,
         accuracy,
@@ -153,6 +208,7 @@ def run_epoch(
         total_spikes,
         spike_tensors,
         voltage_tensors,
+        avg_percent_spiking
     )
 
 
@@ -176,7 +232,7 @@ def train_and_evaluate(
     v1 = init_weight((data_config["nb_hidden"], data_config["nb_hidden"]))
 
     history = {
-        split: {"loss": [], "acc": [], "spikes_per_t": [], "total_spikes": []}
+        split: {"loss": [], "acc": [], "spikes_per_t": [], "total_spikes": [], "avg_percent_spiking": []}
         for split in ["train", "val"]
     }
     history["test"] = {
@@ -206,6 +262,7 @@ def train_and_evaluate(
             history[split]["acc"].append(metrics[1])
             history[split]["spikes_per_t"].append(metrics[2])
             history[split]["total_spikes"].append(metrics[3])
+            history[split]["avg_percent_spiking"].append(metrics[6])
             if wandb_run:
                 wandb_run.log(
                     {
@@ -213,6 +270,7 @@ def train_and_evaluate(
                         f"{split}_acc": metrics[1],
                         f"{split}_spikes_per_t": np.mean(metrics[2]),
                         f"{split}_total_spikes": metrics[3],
+                        f"{split}_avg_percent_spiking": metrics[6],
                     }
                 )
 
@@ -226,6 +284,7 @@ def train_and_evaluate(
         test_total_spikes,
         test_spike_tensors,
         test_voltage_tensors,
+        avg_percent_spiking
     ) = run_epoch(
         model,
         test_loader,
@@ -243,6 +302,7 @@ def train_and_evaluate(
     history["test"]["total_spikes"] = test_total_spikes
     history["test"]["spike_tensors"] = test_spike_tensors
     history["test"]["voltage_tensors"] = test_voltage_tensors
+    history["test"]["avg_percent_spiking"] = avg_percent_spiking
 
     print(
         f"Train Acc: {history['train']['acc'][-1]*100:.2f}%, Val Acc: {history['val']['acc'][-1]*100:.2f}%, Test Acc: {history['test']['acc']*100:.2f}%"
@@ -253,6 +313,7 @@ def train_and_evaluate(
                 "final_train_acc": history["train"]["acc"][-1],
                 "final_val_acc": history["val"]["acc"][-1],
                 "final_test_acc": history["test"]["acc"],
+                "final_test_avg_percent_spiking": history["test"]["avg_percent_spiking"],
             }
         )
     snn_mask = torch.zeros((data_config["nb_hidden"],), device=device)
@@ -291,7 +352,7 @@ def train_and_evaluate(
         device=device,
         wandb_run=wandb_run,
     )
-    hidden_layer_clustering, coefficient_metrics = hidden_layer_visualization(
+    _, _, coefficient_metrics = clustering_metrics_calc(
         model=model_wrapper,
         data_config=data_config,
         dataloader=test_loader,
@@ -303,7 +364,8 @@ def train_and_evaluate(
 
     # Save the visualizations to wandb
 
-    return history, w1, w2, v1, fig2d, fig3d, hidden_layer_clustering
+    return history, w1, w2, v1, fig2d, fig3d
+    # ,hidden_layer_clustering
 
 
 def objective(
@@ -316,6 +378,7 @@ def objective(
     test_loader,
     recurrent_setting,
     project_name,
+    loss_type
 ):
     # Use original distribution styles from the WandB sweep config
     config = {}
@@ -344,8 +407,19 @@ def objective(
         "momentum": trial.suggest_float("momentum", 0.0, 0.99) if config["optimizer"] == "SGD" else 0.0,
         "recurrent": recurrent_setting,  # <- use the fixed value
         "zenke_actual": True,
+        "parameter_free_attention": False
     }
-
+    if loss_type == "attention":
+        config["parameter_free_attention"] = True
+        config["regularization"] = False # No spike regularization
+        # Drop all the l2, v2, l1, v1 upper/lower bounds
+        config["l2_lower"] = 0
+        config["v2_lower"] = 0
+        config["l1_upper"] = 0
+        config["v1_upper"] = 0
+        # Add a new l2 search parameter
+        config["l2"] = trial.suggest_float("l2", 1e-6, 1e-1, log=True)
+    # Actual is default, original is not included for now
 
     run_name = (
         f"{model_name}-recurrent_{config['recurrent']}-"
@@ -357,7 +431,7 @@ def objective(
 
     with wandb.init(project=project_name, config=config, name=run_name):
         model_class = function_mappings[model_name]
-        history, w1, w2, v1, fig2d, fig3d, hidden_layer_clustering = train_and_evaluate(
+        history, w1, w2, v1, fig2d, fig3d = train_and_evaluate(
             model_class,
             train_loader,
             val_loader,
@@ -380,7 +454,7 @@ def objective(
     trial.set_user_attr(
         "3d_landscape", fig3d
     )  # store the model name inside the trial for later if needed
-    trial.set_user_attr(
-        "hidden_layer_clustering", hidden_layer_clustering
-    )  # store the model name inside the trial for later if needed
+    # trial.set_user_attr(
+    #     "hidden_layer_clustering", hidden_layer_clustering
+    # )  # store the model name inside the trial for later if needed
     return final_val_acc
