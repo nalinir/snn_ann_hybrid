@@ -14,9 +14,9 @@ from shd_dataset import data_split_shd
 from train_model import objective
 
 models = [
-    "SNN",
-    "ANN_with_LIF_output",
-    "Hybrid_RNN_SNN_rec",
+    # "SNN",
+    # "ANN_with_LIF_output",
+    # "Hybrid_RNN_SNN_rec",
     "Hybrid_RNN_SNN_V1_same_layer",
 ]
 
