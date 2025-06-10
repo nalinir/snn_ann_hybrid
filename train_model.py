@@ -13,9 +13,9 @@ from models import (
 import wandb
 
 function_mappings = {
-    "SNN": SNN,
-    "ANN_with_LIF_output": ANN_with_LIF_output,
-    "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
+    # "SNN": SNN,
+    # "ANN_with_LIF_output": ANN_with_LIF_output,
+    # "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
 }
 # -- Percent Spiking Metrics --
