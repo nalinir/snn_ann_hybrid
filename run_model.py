@@ -4,6 +4,7 @@ import argparse
 import wandb
 import optuna
 import numpy as np
+import io
 import os
 import pickle
 
@@ -13,10 +14,11 @@ from shd_dataset import data_split_shd
 
 from train_model import objective
 
+
 models = [
-    # "SNN",
-    # "ANN_with_LIF_output",
-    # "Hybrid_RNN_SNN_rec",
+    "SNN",
+    "ANN_with_LIF_output",
+    "Hybrid_RNN_SNN_rec",
     "Hybrid_RNN_SNN_V1_same_layer",
 ]
 
@@ -25,6 +27,20 @@ data_loaders = {
     "shd": data_split_shd,
     "nmnist": data_split_nmnist,
 }
+
+
+# From Gemini for unpickling from gpu torch tensors
+class DynamicDeviceUnpickler(pickle.Unpickler):
+    def __init__(self, file, target_device):
+        super().__init__(file)
+        self.target_device = target_device
+
+    def find_class(self, module, name):
+        if module == 'torch.storage' and name == '_load_from_bytes':
+            # Use the target_device passed during initialization for map_location
+            return lambda b: torch.load(io.BytesIO(b), map_location=self.target_device)
+        else:
+            return super().find_class(module, name)
 
 
 def arg_parser():
@@ -65,17 +81,39 @@ def main():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-
-    # Load data
-    train_loader, test_loader, val_loader = data_loaders[data](
-        data_config, device, dim_manifold=dim_manifold
-    )
-
     # For saving the models - eventually we may want to make loss type a sweep
-    save_dir = (
-        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d/{num_classes}_classes/{loss_type}"
+    save_dir_base = (
+        f"/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/{data}/{dim_manifold}_d/{num_classes}_classes"
     )
-    os.makedirs(save_dir, exist_ok=True)  # Create directory if missing
+    os.makedirs(save_dir_base, exist_ok=True)  # Create directory if missing
+    save_dir = os.path.join(save_dir_base, loss_type)
+    data_loaders_path = os.path.join(save_dir_base, "data_loaders.pkl")
+    # If data loaders already exist, load them
+    if os.path.exists(data_loaders_path):
+        print(f"Loading existing data loaders from {data_loaders_path}")
+        with open(data_loaders_path, "rb") as f:
+            data_loaders_dict = DynamicDeviceUnpickler(f, device).load()
+            train_loader = data_loaders_dict["train_loader"]
+            val_loader = data_loaders_dict["val_loader"]
+            test_loader = data_loaders_dict["test_loader"]
+    # If not, create them
+    else:
+        train_loader, test_loader, val_loader = data_loaders[data](
+            data_config, device, dim_manifold=dim_manifold
+        )
+        # Save the data loaders for reference
+        with open(data_loaders_path, "wb") as f:
+            pickle.dump(
+                {
+                    "train_loader": train_loader,
+                    "val_loader": val_loader,
+                    "test_loader": test_loader,
+                },
+                f,
+            )
+        print(f"Data loaders saved to {data_loaders_path}")
+        print(f"Using device: {device}")
+
 
     for model_name in models:
         allowed_recurrents = [True, False]
