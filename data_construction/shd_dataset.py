@@ -32,7 +32,7 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
         unit_bin = int(unit / conversion_unit_bin)
         spike_train[time_bin, unit_bin] += 1.0
 
-    return torch.tensor(spike_train, dtype=torch.float32)
+    return torch.tensor(spike_train, dtype=torch.float32).cpu()
 
 
 def data_split_shd(config, device=torch.device("cpu"), dim_manifold=None):
