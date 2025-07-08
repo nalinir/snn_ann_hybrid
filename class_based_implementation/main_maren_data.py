@@ -12,7 +12,7 @@ import pytorch_lightning as pl
 from maren_data.helpers import choose_data_params
 # from data_construction.nmnist_dataset import data_split_nmnist
 from data_construction.randman_dataset import data_split_randman
-# from data_construction.shd_dataset import data_split_shd
+from data_construction.shd_dataset import data_split_shd
 
 from class_based_implementation.train_model import objective, MODEL_CLASSES, LOSS_FUNCTIONS # Import mappings too
 
@@ -115,6 +115,8 @@ def main():
             raise ValueError(f"Chosen model {chosen_model} is not in the list of models to run: {models_to_run}")
         models_to_run = [chosen_model]
     config_file_path = f"data_construction/{data}_config.json"
+    if data == "shd_old":
+        config_file_path = "data_construction/shd_config.json"
     if not os.path.exists(config_file_path):
         raise FileNotFoundError(f"Config file not found: {config_file_path}")
     with open(config_file_path, "r") as f:
@@ -144,73 +146,70 @@ def main():
         settings = data_config.copy()
         settings["device"] = device
         settings["dtype"] = torch.float32
-        pre_path_data = f"/scratch/nar8991/snn/snn_ann_hybrid/maren_data/{data_config['nb_inputs']}"
-        train_loader, test_loader, val_loader = choose_data_params(
+        # settings["max_time"] = data_config.get("max_time", 1.0) # Default to 1.0 if not specified
+        pre_path_data = f"/scratch/nar8991/snn/snn_ann_hybrid/maren_data/shd/{data_config['nb_inputs']}_inputs/{data_config['max_time']}_max_time/{data_config['noise']}_noise"
+        # if data_config["percent_data"] < 1.0:
+        #     pre_path_data += f"/{data_config['percent_data']}_percent_data"
+        train_loader, val_loader, test_loader = choose_data_params(
         data, settings, num_workers=num_workers,pre_path=pre_path_data
         )
-        if models_to_run == ["SNN"]:
-            search_space_grid_and_tpe_params = {
-                # "hidden_features": [32, 64, 128], # Must be even for hybrid models
-                # "alpha": [0.7, 0.8, 0.9],
-                # "beta": [0.7, 0.8, 0.9],
-                "lr": [1e-3], # This should actually be 1e-3
-                "optimizer": ["Adam"], # For grid search, you can also add "adamw"
-                # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
-                "l2_lower": [100], #use SHD paper instead
-                "v2_lower": [0.001],
-                "l1_upper": [0.06],
-                "v1_upper": [100],
-                "l2_upper": [0],
-                "v2_upper": [0],
-                # "l2_lower": [0],
-                # "v2_lower": [0],
-                # "l1_upper": [0],
-                # "v1_upper": [0],
-                # "l2_upper": [0],
-                # "v2_upper": [0],
-                # "zenke_enabled": [False],
-                "zenke_enabled": [True], # Zenke regularization is used in SHD paper
-            }
-        elif models_to_run == ["ANN_with_LIF_output"]:
-            search_space_grid_and_tpe_params = {
-                # "hidden_features": [32, 64, 128], # Must be even for hybrid models
-                # "alpha": [0.7, 0.8, 0.9],
-                # "beta": [0.7, 0.8, 0.9],
-                "lr": [1e-3], # This should actually be 1e-3
-                "optimizer": ["Adam"], # For grid search, you can also add "adamw"
-                # "momentum": [0.99], # Only relevant for SGD
-                "l2_lower": [0],
-                "v2_lower": [0],
-                "l1_upper": [0],
-                "v1_upper": [0],
-                "l2_upper": [0],
-                "v2_upper": [0],
-                "zenke_enabled": [False],
-            }
+        search_space_grid_and_tpe_params = {
+            # "hidden_features": [32, 64, 128], # Must be even for hybrid models
+            # "alpha": [0.7, 0.8, 0.9],
+            # "beta": [0.7, 0.8, 0.9],
+            "lr": [1e-3], # This should actually be 1e-3
+            "optimizer": ["Adam"], # For grid search, you can also add "adamw"
+            # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
+            "l2_lower": [15, 100], #use SHD paper instead
+            "v2_lower": [0.001],
+            "l1_upper": [0.06],
+            "v1_upper": [100],
+            "l2_upper": [0],
+            "v2_upper": [0],
+            # "l2_lower": [0],
+            # "v2_lower": [0],
+            # "l1_upper": [0],
+            # "v1_upper": [0],
+            # "l2_upper": [0],
+            # "v2_upper": [0],
+            # "zenke_enabled": [False],
+            "spike_grad_scale": [10],
+            "zenke_enabled": [True], # Zenke regularization is used in SHD paper
+            # "attention_loss": [False]
+        }
+        if models_to_run == ["ANN"]:
+            search_space_grid_and_tpe_params['l2_lower'] = [None] # No regularization for ANN
+            search_space_grid_and_tpe_params['v2_lower'] = [None]
+            search_space_grid_and_tpe_params['l1_upper'] = [None]
+            search_space_grid_and_tpe_params['v1_upper'] = [None]
+            search_space_grid_and_tpe_params['l2_upper'] = [None]
+            search_space_grid_and_tpe_params['v2_upper'] = [None]
+            search_space_grid_and_tpe_params['spike_grad_scale'] = [None] # No spike grad scale for ANN
+            search_space_grid_and_tpe_params['zenke_enabled'] = [None] # No zenke enabled for ANN
+
+    elif data == "shd_old":
+        data_loaders_path = os.path.join(save_dir_base, "data_loaders.pkl")
+        if os.path.exists(data_loaders_path):
+            print(f"Loading existing data loaders from {data_loaders_path}")
+            with open(data_loaders_path, "rb") as f:
+                data_loaders_dict = DynamicDeviceUnpickler(f, device).load()
+                train_loader = data_loaders_dict["train_loader"]
+                val_loader = data_loaders_dict["val_loader"]
+                test_loader = data_loaders_dict["test_loader"]
         else:
-            search_space_grid_and_tpe_params = {
-                # "hidden_features": [32, 64, 128], # Must be even for hybrid models
-                # "alpha": [0.7, 0.8, 0.9],
-                # "beta": [0.7, 0.8, 0.9],
-                "lr": [1e-3], # This should actually be 1e-3
-                "optimizer": ["Adam"], # For grid search, you can also add "adamw"
-                # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
-                "l2_lower": [1], #use SHD paper instead
-                "v2_lower": [0.01],
-                "l1_upper": [0.06],
-                "v1_upper": [100],
-                "l2_upper": [0],
-                "v2_upper": [0],
-                # "l2_lower": [0],
-                # "v2_lower": [0],
-                # "l1_upper": [0],
-                # "v1_upper": [0],
-                # "l2_upper": [0],
-                # "v2_upper": [0],
-                # "zenke_enabled": [False],
-                "zenke_enabled": [True], # Zenke regularization is used in SHD paper
-            }
-  
+            train_loader, test_loader, val_loader = data_split_shd(
+                data_config, device, dim_manifold=dim_manifold
+            )
+            with open(data_loaders_path, "wb") as f:
+                pickle.dump(
+                    {
+                        "train_loader": train_loader,
+                        "val_loader": val_loader,
+                        "test_loader": test_loader,
+                    },
+                    f,
+                )
+            print(f"Data loaders saved to {data_loaders_path}")
     elif data == "randman":
         data_loaders_path = os.path.join(save_dir_base, "data_loaders.pkl")
 

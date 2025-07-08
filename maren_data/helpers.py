@@ -17,6 +17,23 @@ import h5py
 from maren_data.CustomSpikeDataset import CustomSpikeDataset
 
 
+class ChannelJitter:
+    def __init__(self, sigma=20):
+        self.sigma = sigma
+
+    def __call__(self, events):
+        # events: dictionary or structured array with fields ['t', 'x', 'y', 'p'] or ['t', 'i']
+        # Assume events['i'] is the channel index (unit) as in SHD/SSC
+        i_jittered = events['i'] + np.random.normal(loc=0.0, scale=self.sigma, size=events['i'].shape)
+        events['i'] = np.clip(np.round(i_jittered), 0, 699)  # SHD has 700 input channels
+        return events
+
+
+class SqueezeTransform:
+    def __call__(self, x):
+        return np.squeeze(x)
+
+
 def pad_and_flatten_collate(batch):
     # print("\n--- Inside pad_and_flatten_collate (Applying batch_first=True permutation) ---")
     # print(f"Incoming raw batch type: {type(batch)}, Length: {len(batch)}") 
@@ -58,7 +75,8 @@ def pad_and_flatten_collate(batch):
     # print(f"\n  Length of list passed to tonic.collation.PadTensors: {len(processed_batch_for_tonic_padding)}")
 
     # Step 2: Call tonic.collation.PadTensors with batch_first=False (as it's likely fixed now)
-    # It returns (Time, Batch, Features) and (Batch)
+    # It returns (Time, Batch, Features) and (Batch) 
+    # THIS IS BECAUSE WE WANT PADDING BASED ON TIME DIMENSION
     intermediate_samples_tensor, final_targets_tensor = \
         tonic.collation.PadTensors(batch_first=False)(processed_batch_for_tonic_padding)
 
@@ -96,6 +114,7 @@ def pad_and_flatten_collate(batch):
     # print(f"Final Shape of labels batch: {final_targets_tensor.shape}")
     # print(f"--- Exiting pad_and_flatten_collate ---")
 
+    # WE ALSO WANT TO PAD AT THE BATCH LEVEL FOR THE LAST BATCH
     return final_padded_samples_tensor, final_targets_tensor
 
 def get_data_loaders(
@@ -162,7 +181,7 @@ def get_data_loaders(
     return train_dataloader, val_dataloader, test_dataloader
 
 
-def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100):
+def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100, max_time=None, noise=False):
     if data_set_name == "mnist":
         # -> from tonic docs
         # Denoise removes isolated, one-off events
@@ -183,20 +202,26 @@ def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100):
 
         # -> Gregor Lenz (https://lenzgregor.com/posts/train-snns-fast/)
 
-        transform = tonic.transforms.Compose(
-            [
-                transforms.Downsample(
-                    spatial_factor=encoding_dim / np.prod(sensor_size)
-                ), # 700), #downsample to encoding_dim
-                #transforms.CropTime(max=1e6),
-                transforms.ToFrame(
-                    # sensor_size=sensor_size, time_window=time_step * 1e6, include_incomplete=True
-                    sensor_size=(encoding_dim, 1, 1),
-                    time_window=time_step * 1e6,
-                    include_incomplete=True,
-                ),
-            ]
+        transform_list = [
+        ]
+        if noise:
+            transform_list.append(ChannelJitter(sigma=20))
+        transform_list.append(transforms.Downsample(
+                spatial_factor=encoding_dim / np.prod(sensor_size)
+            ),
+        )  # downsample to encoding_dim
+        # If max_time is provided, crop to that time (in microseconds)
+        if max_time is not None:
+            transform_list.append(transforms.CropTime(max=max_time * 1e6))
+        transform_list.append(
+            transforms.ToFrame(
+                sensor_size=(encoding_dim, 1, 1),
+                time_window=time_step * 1e6,
+                include_incomplete=True,
+            )
         )
+        transform_list.append(SqueezeTransform())
+        transform = tonic.transforms.Compose(transform_list)
     else:
         raise NotImplementedError
 
@@ -204,7 +229,7 @@ def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100):
 
 
 def get_tonic_dataset(
-    data_set_name, time_step, mode=None, transform=False, encoding_dim=100,pre_path=''
+    data_set_name, time_step, mode=None, transform=False, encoding_dim=100,pre_path='', max_time=None, noise=False
 ):
     """
     Download tonic dataset.
@@ -236,11 +261,14 @@ def get_tonic_dataset(
         sensor_size=sensor_size,
         time_step=time_step,
         encoding_dim=encoding_dim,
+        max_time=max_time,
+        noise=noise
     )
 
 
     dataset = Data(
-        save_to=f'{pre_path}data/{data_set_name}/pre_cache_{time_step}',
+        # save_to=f'{pre_path}data/{data_set_name}/pre_cache_{time_step}',
+        save_to=f'{pre_path}/pre_cache_{time_step}',
         transform=init_transform,
         train=train,
     )
@@ -249,20 +277,20 @@ def get_tonic_dataset(
     dataloader = DataLoader(dataset, num_workers=2)
     print(next(iter(dataloader)))
 
-    # also apply random rotations (for image data in training set)
-    rotate = tonic.transforms.Compose(
-        [torch.from_numpy, torchvision.transforms.RandomRotation([-10, 10])]
+    # # also apply random rotations (for image data in training set)
+    # rotate = tonic.transforms.Compose(
+    #     [torch.from_numpy, torchvision.transforms.RandomRotation([-10, 10])]
+    # )
+    # if transform:
+    #     cached_dataset = DiskCachedDataset(
+    #         dataset,
+    #         transform=rotate,
+    #         cache_path=f'{pre_path}data/{data_set_name}/cache_{time_step}/{mode}',
+    #     )
+    # else:
+    cached_dataset = DiskCachedDataset(
+        dataset, cache_path=f'{pre_path}/cache_{time_step}/{mode}'
     )
-    if transform:
-        cached_dataset = DiskCachedDataset(
-            dataset,
-            transform=rotate,
-            cache_path=f'{pre_path}data/{data_set_name}/cache_{time_step}/{mode}',
-        )
-    else:
-        cached_dataset = DiskCachedDataset(
-            dataset, cache_path=f'{pre_path}data/{data_set_name}/cache_{time_step}/{mode}'
-        )
 
     return cached_dataset
 
@@ -280,16 +308,27 @@ def train_val_split(dataset,batch_size, num_workers=0):
     # split deterministically
     train_indices = list(range(train_size))  # first 90% of training set
     val_indices = list(range(train_size, dataset_size))  # remaining data points for validation set
+    # Shuffle indices before splitting
+    # indices = np.arange(dataset_size)
+    # np.random.seed(42)  # For reproducibility
+    # np.random.shuffle(indices)
+    # train_indices = indices[:train_size]
+    # val_indices = indices[train_size:]
+    # if percent_data < 1.0:
+    #     # Calculate the number of samples to keep based on percent_data
+    #     num_samples = int(len(train_indices) * percent_data)
+    #     train_indices = train_indices[:num_samples]
+    #     val_indices = val_indices[:num_samples]
 
     train_dataset= Subset(dataset, train_indices)
     val_dataset = Subset(dataset, val_indices)
 
-    # trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=tonic.collation.PadTensors(batch_first=False))
-    # valloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=tonic.collation.PadTensors(batch_first=False))
+    trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=tonic.collation.PadTensors(batch_first=True), num_workers=num_workers)
+    valloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=tonic.collation.PadTensors(batch_first=True), num_workers=num_workers)
 
 
-    trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=pad_and_flatten_collate, num_workers=num_workers)
-    valloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=pad_and_flatten_collate, num_workers=num_workers)
+    # trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=pad_and_flatten_collate, num_workers=num_workers, drop_last=True)  # drop last batch if not full
+    # valloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=pad_and_flatten_collate, num_workers=num_workers, drop_last=True)  # drop last batch if not full
 
     return trainloader,valloader
 
@@ -487,7 +526,7 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             shuffle=False
         )
 
-        trainloader,valloader=train_val_split(cached_trainset,settings["batch_size"])
+        trainloader,valloader=train_val_split(cached_trainset,settings["batch_size"], num_workers=num_workers)
         nb_steps=None
 
 
@@ -502,7 +541,10 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             mode='train',
             transform=False, #no image data -> no rotations
             encoding_dim=settings["nb_inputs"],
-            pre_path=pre_path
+            pre_path=pre_path,
+            max_time=settings["max_time"],
+            noise=settings["noise"]
+
         )
         cached_testset = get_tonic_dataset(
             data_set_name,
@@ -510,17 +552,29 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             mode='test',
             transform=False,
             encoding_dim=settings["nb_inputs"],
-            pre_path=pre_path
+            pre_path=pre_path,
+            max_time=settings["max_time"],
+            noise=settings["noise"]
         )
-
+        if settings["percent_data"] < 1.0:
+            # Calculate the number of samples to keep based on percent_data
+            num_train_samples = int(len(cached_trainset) * settings["percent_data"])
+            num_test_samples = int(len(cached_testset) * settings["percent_data"])
+            # Assign the samples selected randomly
+            np.random.seed(42)
+            train_indices = np.random.choice(len(cached_trainset), num_train_samples, replace=False)
+            test_indices = np.random.choice(len(cached_testset), num_test_samples, replace=False)
+            cached_trainset = Subset(cached_trainset, train_indices)
+            cached_testset = Subset(cached_testset, test_indices)
 
         # pad time dimension for test and training set -> batch_first=False
         testloader = DataLoader(
             cached_testset,
             batch_size=settings["batch_size"],
-            # collate_fn=tonic.collation.PadTensors(batch_first=False),
-            collate_fn=pad_and_flatten_collate,
+            collate_fn=tonic.collation.PadTensors(batch_first=True),
+            # collate_fn=pad_and_flatten_collate,
             num_workers=num_workers,
+            # drop_last=True,  # drop last batch if not full
         )
 
         trainloader,valloader=train_val_split(cached_trainset,settings["batch_size"], num_workers)
@@ -566,7 +620,15 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
     # print(f"Shape of testloader data batch: {data_batch.shape}")
     # print(f"Shape of testloader labels batch: {labels_batch.shape}")
 
-
+    print_class_dist(trainloader, "Train")
+    print_class_dist(valloader, "Val")
+    print_class_dist(testloader, "Test")
     
 
     return trainloader,valloader, testloader
+
+def print_class_dist(loader, name):
+    all_labels = []
+    for _, labels in loader:
+        all_labels.extend(labels.cpu().numpy())
+    print(f"{name} class distribution:", np.bincount(np.array(all_labels).astype(int)))

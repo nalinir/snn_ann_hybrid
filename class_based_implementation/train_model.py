@@ -87,7 +87,7 @@ def objective(
     # beta = trial.suggest_float("beta", 0.7, 0.95)
     
     # optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "SGD"])
-    optimizer_name = trial.suggest_categorical("optimizer", ["Adam"])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adamax"])
     # Conditional hyperparameter suggestion based on optimizer
     if optimizer_name == "Adam":
         # learning_rate = trial.suggest_float("adam_lr", 1e-4, 2e-3, log=False)
@@ -96,17 +96,24 @@ def objective(
     elif optimizer_name == "SGD":
         learning_rate = trial.suggest_float("sgd_lr", 1e-2, 0.5, log=False)
         momentum = trial.suggest_float("momentum", 0.0, 0.99)
+    elif optimizer_name == "Adamax":
+        # Adamax specific learning rate
+        if "ANN" in model_name_str:
+            learning_rate = trial.suggest_float("adamax_lr", 1e-3, 1e-3, log=False)
+        else:
+            learning_rate = trial.suggest_float("adamax_lr", 1e-3, 1e-3, log=False)
+        momentum = 0.0
         
     # Zenke regularization specific hyperparameters
     l2_lower = trial.suggest_float("l2_lower", 100, 100, log=False)
     v2_lower = trial.suggest_float("v2_lower", 1e-3, 1e-3, log=False)
-    l1_upper = trial.suggest_float("l1_upper", 1, 1000, log=False)
+    l1_upper = trial.suggest_float("l1_upper", 0.06, 0.06, log=False)
     # l1_upper = trial.suggest_float("l1_upper", 1, 100, log=False)
     # v1_upper = 0.06
-    v1_upper = trial.suggest_float("v1_upper", 0.06, 0.06, log=False)
+    v1_upper = trial.suggest_float("v1_upper", 0, 1000, log=False)
     l2_upper = trial.suggest_categorical("l2_upper", [0])
-    # trial.suggest_categorical("l2_upper", [0, 1, data_config["nb_hidden"]])    
-    v2_upper =  trial.suggest_float("v2_upper", 0, 0, log=False)
+    # trial.suggest_categorical("l2_upper", [0, 1, data_config["nb_hidden"]])
+    v2_upper = trial.suggest_float("v2_upper", 0, 0, log=False)
     # trial.suggest_float("v2_upper", 0, data_config["nb_hidden"], log=False)
 
     # Store Zenke config in a dict
@@ -118,7 +125,7 @@ def objective(
         "l2_upper": l2_upper,
         "v2_upper": v2_upper,
     }
-    spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 10.0, log=False)
+    spike_grad_scale = trial.suggest_float("spike_grad_scale", 50.0, 50.0, log=False)
 
     # Initialize wandb for this trial
     wandb.init(
@@ -191,6 +198,7 @@ def objective(
         raise optuna.exceptions.TrialPruned()
 
     # --- Evaluation ---
+    # I DON'T THINK WE NEED THIS, REMOVE?
     val_total_loss = trainer.callback_metrics.get("val_total_loss")
     if val_total_loss is None:
         val_total_loss = trainer.callback_metrics.get("val_loss", torch.tensor(float('inf'))).item()
@@ -203,15 +211,43 @@ def objective(
     if test_results and isinstance(test_results, list):
         wandb.log({f"{k}": v for k, v in test_results[0].items()})
 
+    final_epoch = trainer.max_epochs
+
     # --- Loss Landscape Visualization ---
     try:
-        fig3d, fig2d = visualize_loss_landscape_3d(
+        # Train loss landscape
+        fig3d_train, fig2d_train = visualize_loss_landscape_3d(
+            model, loss_fn_instance, train_loader, device=device, wandb_run=wandb.run
+        )
+        if fig3d_train:
+            wandb.log({"3d_landscape_train": wandb.Image(fig3d_train), "epoch": final_epoch})
+            print("3D train loss landscape visualization logged to wandb at epoch", final_epoch)
+        if fig2d_train:
+            wandb.log({"2d_landscape_train": wandb.Image(fig2d_train), "epoch": final_epoch})
+            print("2D train loss landscape visualization logged to wandb at epoch", final_epoch)
+
+        # Validation loss landscape
+        fig3d_val, fig2d_val = visualize_loss_landscape_3d(
             model, loss_fn_instance, val_loader, device=device, wandb_run=wandb.run
         )
-        if fig3d:
-            wandb.log({"3d_landscape": wandb.Image(fig3d)})
-        if fig2d:
-            wandb.log({"2d_landscape": wandb.Image(fig2d)})
+        if fig3d_val:
+            wandb.log({"3d_landscape_val": wandb.Image(fig3d_val), "epoch": final_epoch})
+            print("3D val loss landscape visualization logged to wandb at epoch", final_epoch)
+        if fig2d_val:
+            wandb.log({"2d_landscape_val": wandb.Image(fig2d_val), "epoch": final_epoch})
+            print("2D val loss landscape visualization logged to wandb at epoch", final_epoch)
+
+        # Test loss landscape
+        fig3d_test, fig2d_test = visualize_loss_landscape_3d(
+            model, loss_fn_instance, test_loader, device=device, wandb_run=wandb.run
+        )
+        if fig3d_test:
+            wandb.log({"3d_landscape_test": wandb.Image(fig3d_test), "epoch": final_epoch})
+            print("3D test loss landscape visualization logged to wandb at epoch", final_epoch)
+        if fig2d_test:
+            wandb.log({"2d_landscape_test": wandb.Image(fig2d_test), "epoch": final_epoch})
+            print("2D test loss landscape visualization logged to wandb at epoch", final_epoch)
+
     except Exception as e:
         print(f"Loss landscape visualization failed: {e}")
 

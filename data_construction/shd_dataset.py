@@ -11,7 +11,7 @@ from tonic import transforms
 
 def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_time):
     spike_train = np.zeros((nb_steps, nb_units), dtype=np.float32)
-    print(f"Processing spike events with {len(spike_events)} events, ")
+    # print(f"Processing spike events with {len(spike_events)} events, ")
     # print(f"Expected shape: ({nb_steps}, {nb_units})")
     # print(f"Shape: {spike_events.shape}, ")
 
@@ -22,11 +22,13 @@ def preprocess_spike_events(spike_events, nb_steps, nb_units, time_step, max_tim
     polarities = spike_events["p"]
     conversion_unit_bin = nb_units/700
     spike_counts = np.zeros(nb_units, dtype=np.int32)
-    max_spikes_per_unit = 30
+    # Combine timestaps, nb_units, and polarities into a single array
+    spike_events = np.array(list(zip(timestamps, polarities, units_fired)))
+    # max_spikes_per_unit = 30
 
     for t, p, unit in spike_events:
-        if spike_counts[unit] >= max_spikes_per_unit:
-            continue
+        # if spike_counts[unit] >= max_spikes_per_unit:
+        #     continue
         time_bin = int(round(t * time_step))
         # time_bin = int(t)
         unit_bin = int(unit / conversion_unit_bin)
