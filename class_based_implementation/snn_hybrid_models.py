@@ -31,55 +31,53 @@ class SurrGradSpike(torch.autograd.Function):
         return grad, None # Return None for the scale gradient as it's not a learnable parameter here
 
 
-# --- Attention Mechanism Loss ---
-def parameter_free_attention(mem, n):
-    # Input current should be the membrane potential for a given neuron
-    # Threshold is 1 for this model (just don't do mthr)
-    # Other should be 0
+# # --- Attention Mechanism Loss ---
+# def parameter_free_attention(mem, n):
+#     # Input current should be the membrane potential for a given neuron
+#     # Threshold is 1 for this model (just don't do mthr)
+#     # Other should be 0
 
 
-    # The membrane potential for each timestep has shape (batch, nb_hidden)
-    first_part = (1-mem)**2
-    # This is just the resulting membrane potential from all other neurons other than a given neuron
-    second_part_interim = (0-mem)**2
-    total_sum_mem = torch.sum(second_part_interim)
-    second_part = (total_sum_mem - second_part_interim)/(n-1)
-    # We take all except a given index and then take the mean
-    return second_part + first_part
+#     # The membrane potential for each timestep has shape (batch, nb_hidden)
+#     first_part = (1-mem)**2
+#     # This is just the resulting membrane potential from all other neurons other than a given neuron
+#     second_part_interim = (0-mem)**2
+#     total_sum_mem = torch.sum(second_part_interim)
+#     second_part = (total_sum_mem - second_part_interim)/(n-1)
+#     # We take all except a given index and then take the mean
+#     return second_part + first_part
 
-def attention_loss(mem, w1, n, config):
-    """
-    Computes the attention loss with L2 regularization.
-    """
-    # mem should be of shape (batch, nb_hidden)
-    # n is the number of neurons in the layer
-    ## To allow for L2 regularization for model
-    if mem is None:
-        attn_loss = 0
-    else:
-        attn_loss = torch.sum(parameter_free_attention(mem, n))
-    l2_loss = torch.sum(config["l2"] * (w1**2))
-    return attn_loss + l2_loss
+# def attention_loss(mem, w1, n, config):
+#     """
+#     Computes the attention loss with L2 regularization.
+#     """
+#     # mem should be of shape (batch, nb_hidden)
+#     # n is the number of neurons in the layer
+#     ## To allow for L2 regularization for model
+#     if mem is None:
+#         attn_loss = 0
+#     else:
+#         attn_loss = torch.sum(parameter_free_attention(mem, n))
+#     l2_loss = torch.sum(config["l2"] * (w1**2))
+#     return attn_loss + l2_loss
 
 
 # # --- Regularization Modules (Unchanged) ---
+# NOW -> ONLY SNN SPIKES SHOULD BE INPUT! NO OTHER EXTRA DIMENSION FOR ANN!
 def bound_regularizer(spk, v_t, l_t, exp, upper_bound=True, population_level=True):
     # B, T, N = spk.shape
-    cnt = torch.mean(torch.sum(spk, dim=1), dim=0)  # get spikecount over time (B, N), then (N, )
-    # Then mean it over batch so number of neurons per batch
-    # Then take the average per neuron so it's not dependent on batch
-    # Single neuron over time - how much does it spike on average?
-    # Count -> make this an average on the batch level
+    cnt = torch.sum(spk, dim=1)  # get spikecount over time (B, N) -> do the batch level averaging last!
     if upper_bound:
         diff = cnt-v_t # (N,)
-        mean_diff = torch.mean(diff, dim=0) # scalar
-        relu_result = torch.relu(mean_diff)**exp
-        return l_t * relu_result # I think the -1 was just a typo/artifact????
+        mean_diff = torch.mean(diff, dim=1) # (B,)
+        relu_result = torch.relu(mean_diff)**exp #(B,)
+        # Then take the average
+        return l_t * torch.mean(relu_result) # I think the -1 was just a typo/artifact????
     else: # lower bound
-        r_diff = torch.relu(v_t - cnt) # (N,)
-        exp_r_diff = torch.pow(r_diff, exp) # (N,)
-        mean_diff = torch.mean(exp_r_diff) # scalar
-        return l_t * mean_diff
+        r_diff = torch.relu(v_t - cnt) # (B, N)
+        exp_r_diff = torch.pow(r_diff, exp) # (B, N)
+        mean_diff = torch.mean(exp_r_diff, dim=1) # (B,)
+        return l_t * torch.mean(mean_diff)
 
 def regularization_loss_zenke(spks, config):
     lower_l2 = bound_regularizer(
@@ -107,7 +105,7 @@ def regularization_loss_zenke(spks, config):
         upper_bound=True,
         population_level=False,
     )
-    return lower_l2 + upper_l1 + upper_l2
+    return lower_l2 + upper_l1 + upper_l2, lower_l2, upper_l1, upper_l2
 
 ## GEMINI:
 # --- Reintroduced regularization_loss_zenke function using class-based regularizers ---
@@ -188,6 +186,7 @@ class BaseTemporalModel(pl.LightningModule):
                  spike_grad_scale: float = 100.0, # Added spike_grad_scale
                  weight_scale: float = 1,  # <-- Add this line
                  dtype: torch.dtype = torch.float32,  # <-- Add this line
+                 max_logit: bool = True,  # If not max, then sum
                 ):
         super().__init__()
         
@@ -198,11 +197,13 @@ class BaseTemporalModel(pl.LightningModule):
         self.output_features = output_features
         self.alpha = float(np.exp(-data_config["time_step"] / data_config["tau_syn"]))
         self.beta=float(np.exp(-data_config["time_step"] / data_config["tau_mem"]))
+        self.beta_out=float(np.exp(-data_config["time_step"] / data_config["tau_readout"]))
         self.spike_grad_scale = spike_grad_scale # Stored as a hyperparameter
         self.spike_fn = spike_fn
         self.recurrent = recurrent
         self.learning_rate = learning_rate
         self.loss_fn = loss_fn
+        self.max_logit = max_logit  # If not max, then sum
 
         self.zenke_config = zenke_config if zenke_config is not None else {}
         self.zenke_enabled = bool(self.zenke_config) and (self.zenke_config.get("l2_lower", 0) != 0 or \
@@ -240,6 +241,9 @@ class BaseTemporalModel(pl.LightningModule):
             self.snn_mask = None
             # If no mask, assume all hidden neurons are SNN (pure SNN model)
             self.num_snn_neurons_in_layer = self.hidden_features 
+        self.snn_ratio =  self.num_snn_neurons_in_layer/self.hidden_features
+        if self.snn_ratio == 1 and snn_mask is not None:
+            raise ValueError("snn ratio is 1 but SNN mask is not None, check SNN mask")
 
 
     def _apply_readout_layer(self, h2_input: torch.Tensor) -> torch.Tensor:
@@ -257,7 +261,7 @@ class BaseTemporalModel(pl.LightningModule):
 
         for t in range(h2_input.shape[1]):
             new_flt = self.alpha * flt + h2_input[:, t]
-            new_out = self.beta * out + flt
+            new_out = self.beta_out * out + flt
 
             flt = new_flt
             out = new_out
@@ -292,59 +296,76 @@ class BaseTemporalModel(pl.LightningModule):
         # inputs = self._prep_forward(inputs)  # Ensure inputs are in the correct shape
         predictions, auxiliary_outputs = self(inputs)
 
-        max_over_time, _ = torch.max(predictions, dim=1)  # [batch, num_classes]
+        # This should maybe not be max over time but sum?
+        if self.max_logit:
+            logit_output, _ = torch.max(predictions, dim=1)  # [batch, num_classes]
+        else:
+            logit_output = torch.sum(predictions, dim=1)
 
-        main_loss = self.loss_fn(max_over_time, targets)
+        main_loss = self.loss_fn(logit_output, targets)
         total_loss = main_loss
 
         # Calculate and log Accuracy
         if step_type == "train":
-            self.train_accuracy.update(max_over_time, targets)
+            self.train_accuracy.update(logit_output, targets)
             self.log(f'{step_type}_accuracy', self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         elif step_type == "val":
-            self.val_accuracy.update(max_over_time, targets)
+            self.val_accuracy.update(logit_output, targets)
             self.log(f'{step_type}_accuracy', self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True, logger=True)
         elif step_type == "test":
-            self.test_accuracy.update(max_over_time, targets)
+            self.test_accuracy.update(logit_output, targets)
             self.log(f'{step_type}_accuracy', self.test_accuracy, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
         # --- Zenke Spike Regularization & Metrics ---
         if self.zenke_enabled and 'spikes' in auxiliary_outputs:
             spikes = auxiliary_outputs['spikes'] # Shape: (Batch, Time, Hidden) - binary output
-            avg_spikes_per_neuron = torch.mean(torch.sum(spikes, dim=1), dim=0)  # mean over batch and neurons
+            # MAYBE WE JUST ADJUST THE DIMENSIONS OF SPIKES TO ACCOUNT FOR THE NUMBER OF NEURONS?
 
-            zenke_loss = regularization_loss_zenke(spikes, self.zenke_config)
-            total_loss += zenke_loss
-
-            self.log(f'{step_type}_main_loss', main_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
-            self.log(f'{step_type}_zenke_reg_loss', zenke_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
-            
-            spikes_per_neuron_per_sample = torch.sum(spikes, dim=1) 
-            
-            # Mask to indicate which neurons spiked at least once in each sample: (Batch, Hidden)
-            neurons_spiked_at_least_once_mask = (spikes_per_neuron_per_sample > 0).float()
 
             if self.snn_mask is not None:
                 # For hybrid models, apply the mask to only consider SNN neurons
                 # snn_mask is (Hidden,), unsqueeze(0) makes it (1, Hidden) for broadcasting
-                snn_neurons_spiked_flagged = neurons_spiked_at_least_once_mask * self.snn_mask.unsqueeze(0) # (Batch, Hidden)
+                # THIS IS ACTUALY REDUNDANT - LET"S FILTER IT OUT
+                # snn_neurons_spiked_flagged = neurons_spiked_at_least_once_mask * self.snn_mask.unsqueeze(0) # (Batch, Hidden)
+                snn_spikes = spikes[:, :, self.snn_mask.bool()]
                 
                 # Count how many SNN neurons spiked at least once per sample: (Batch,)
-                num_snn_neurons_spiked_per_sample = torch.sum(snn_neurons_spiked_flagged, dim=1)
                 
-                # Calculate percentage, averaging over the batch: scalar
-                if self.num_snn_neurons_in_layer > 0:
-                    percent_snn_neurons_spiking_per_sample = (num_snn_neurons_spiked_per_sample / self.num_snn_neurons_in_layer).mean()
+                # # Calculate percentage, averaging over the batch: scalar
+                # if self.num_snn_neurons_in_layer > 0:
+                #     percent_snn_neurons_spiking_per_sample = (num_snn_neurons_spiked_per_sample / self.num_snn_neurons_in_layer).mean()
+                #     # We have spikes per neuron per sample (batch, hidden)
+                #     # Next -> we need to figure out the average number of spikes per neuron in a given batch
+                #     # We can do this by just taking the average (BUT it should be scaled by the number of neurons in layer so it's not penalized)
+                #     avg_spikes_per_neuron_batch_level = torch.mean(spikes_per_neuron_per_sample, dim=1)*self.snn_ratio # (batch,) RESCALED
+                #     avg_spikes_per_neuron = torch.mean(avg_spikes_per_neuron_batch_level, dim=0)
+                # else: # Handle case with no SNN neurons (shouldn't happen if spk_rec is provided)
+                #     raise ValueError("no SNNs but spk_rec provided")
 
-                else: # Handle case with no SNN neurons (shouldn't happen if spk_rec is provided)
-                    percent_snn_neurons_spiking_per_sample = torch.tensor(0.0, device=self.device)
-                    # percent_snn_neurons_spiking_per_sample = torch.tensor(0.0)
             else: 
+                snn_spikes = spikes
                 # For pure SNN models, all hidden neurons are SNN
                 # Count how many hidden neurons spiked at least once per sample: (Batch,)
-                num_neurons_spiked_per_sample = torch.sum(neurons_spiked_at_least_once_mask, dim=1)
-                # Calculate percentage, averaging over the batch: scalar
-                percent_snn_neurons_spiking_per_sample = (num_neurons_spiked_per_sample / self.hidden_features).mean()
+                # num_neurons_spiked_per_sample = torch.sum(neurons_spiked_at_least_once_mask, dim=1)
+                # # Calculate percentage, averaging over the batch: scalar
+                # percent_snn_neurons_spiking_per_sample = (num_neurons_spiked_per_sample / self.hidden_features).mean()
+                # avg_spikes_per_neuron = torch.mean(torch.mean(spikes_per_neuron_per_sample, dim=1), dim=0)  # mean over hidden, then batch
+
+            spikes_per_neuron_per_sample = torch.sum(snn_spikes, dim=1) # Total count of number of spiking neurons per neuron: shape (batch, hidden)
+            # Mask to indicate which neurons spiked at least once in each sample: (Batch, Hidden)
+            neurons_spiked_at_least_once_mask = (spikes_per_neuron_per_sample > 0).float()
+            num_neurons_spiked_per_sample = torch.sum(neurons_spiked_at_least_once_mask, dim=1)
+            percent_snn_neurons_spiking_per_sample = (num_neurons_spiked_per_sample / self.hidden_features).mean()
+            avg_spikes_per_neuron = torch.mean(torch.mean(spikes_per_neuron_per_sample, dim=1), dim=0)  # mean over hidden, then batch
+
+            # Put in the average spikes per neuron at the batch level or make sure that logic is implemented in zenke loss
+            zenke_loss, lower_l2, upper_l1, upper_l2 = regularization_loss_zenke(snn_spikes, self.zenke_config)
+            total_loss += zenke_loss
+            
+            self.log(f'{step_type}_zenke_reg_loss', zenke_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            self.log(f'{step_type}_zenke_lower_l2', lower_l2, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            self.log(f'{step_type}_zenke_upper_l1', upper_l1, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+            self.log(f'{step_type}_zenke_upper_l2', upper_l2, on_step=False, on_epoch=True, prog_bar=False, logger=True)            
 
             total_spikes = spikes.sum()
             self.log(f'{step_type}_percent_neurons_spiking_per_sample', percent_snn_neurons_spiking_per_sample * 100, on_step=False, on_epoch=True, prog_bar=True, logger=True)
@@ -352,14 +373,10 @@ class BaseTemporalModel(pl.LightningModule):
 
             # --- NEW: Average spikes per neuron and per batch ---
             # spikes: (Batch, Time, Hidden)
-            avg_spikes_per_neuron = torch.mean(torch.mean(torch.sum(spikes, dim=1), dim=0), dim=0)  # mean over batch and neurons
 
             self.log(f'{step_type}_avg_spikes_per_neuron', avg_spikes_per_neuron, on_step=False, on_epoch=True, prog_bar=False, logger=True)
 
-
-
-        else: # For models without spikes (e.g., pure ANN or if zenke_enabled is False)
-            self.log(f'{step_type}_loss', main_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+        self.log(f'{step_type}_main_loss', main_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
         self.log(f'{step_type}_total_loss', total_loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
@@ -513,7 +530,7 @@ class Hybrid_RNN_SNN_rec(BaseTemporalModel):
             torch.ones(num_snn_neurons),
             torch.zeros(hidden_features - num_snn_neurons)
         ])
-        snn_mask_tensor = snn_mask_elements[torch.randperm(hidden_features)]
+        # snn_mask_tensor = snn_mask_elements[torch.randperm(hidden_features)]
 
         super().__init__(
             input_features=input_features,
@@ -525,7 +542,7 @@ class Hybrid_RNN_SNN_rec(BaseTemporalModel):
             spike_fn=spike_fn,
             recurrent=recurrent,
             learning_rate=learning_rate,
-            snn_mask=snn_mask_tensor,
+            snn_mask=snn_mask_elements,
             loss_fn=loss_fn,
             zenke_config=zenke_config,
             optimizer_name=optimizer_name,
@@ -644,7 +661,7 @@ class Hybrid_RNN_SNN_V1_same_layer(BaseTemporalModel):
             torch.ones(num_snn_neurons),
             torch.zeros(hidden_features - num_snn_neurons)
         ])
-        snn_mask_tensor = snn_mask_elements[torch.randperm(hidden_features)]
+        # snn_mask_tensor = snn_mask_elements[torch.randperm(hidden_features)]
 
         super().__init__(
             input_features=input_features,
@@ -656,7 +673,7 @@ class Hybrid_RNN_SNN_V1_same_layer(BaseTemporalModel):
             spike_fn=spike_fn,
             recurrent=recurrent,
             learning_rate=learning_rate,
-            snn_mask=snn_mask_tensor,
+            snn_mask=snn_mask_elements,
             loss_fn=loss_fn,
             zenke_config=zenke_config,
             optimizer_name=optimizer_name,

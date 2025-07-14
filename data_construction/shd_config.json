@@ -6,6 +6,7 @@
     "max_time": 1.0,
     "tau_mem": 0.01,
     "tau_syn": 0.005,
+    "tau_readout": 0.02,
     "batch_size": 256,
     "epochs": 200,
     "noise": false,

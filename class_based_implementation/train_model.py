@@ -21,10 +21,11 @@ MODEL_CLASSES = {
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
 }
 
+# TO REMOVE/ADD LOGIC TO MAKE WORK -- right now only cross_entropy is correct
 LOSS_FUNCTIONS = {
     "cross_entropy": nn.CrossEntropyLoss(),
-    "mse": nn.MSELoss(),
-    "nll": nn.NLLLoss(),
+    # "mse": nn.MSELoss(),
+    # "nll": nn.NLLLoss(),
     # Add other loss functions if you use them
 }
 
@@ -44,50 +45,7 @@ def objective(
     """
     Objective function for Optuna hyperparameter optimization.
     """
-    # --- Trial-Level Seed ---
-    # This ensures model initialization and data loading are reproducible for this specific trial.
-    # We pass 'sweep_seed' from main.py implicitly via the global state if needed, or explicitly.
-    # The 'trial.number' is key for trial-level seeding.
-    # Let's assume sweep_seed is implicitly handled by pl.seed_everything(None) or a global variable
-    # If you want to explicitly pass sweep_seed, add it to objective's signature.
-    
-    # For robust trial-level seeding with sweep_seed:
-    # Assuming `sweep_seed` is passed to objective, if not, you need to add it to the signature.
-    # The `sweep_seed` is now passed through the `objective_wrapper`.
-    # Let's adjust objective signature slightly for explicit sweep_seed.
-    
-    # If the `sweep_seed` is NOT passed to `objective` directly:
-    # `pl.seed_everything(trial.number, workers=True)` would ensure individual trial reproducibility
-    # regardless of sweep_seed, but the sequence of trial seeds would always be `0, 1, 2...`
-    # for each separate sweep.
-
-    # Re-integrating explicit trial_seed based on sweep_seed (passed via outer objective_wrapper)
-    # The `sweep_seed` is actually defined in `main.py` and used by `pl.seed_everything` there.
-    # For a deterministic *trial-level* seed that is also affected by the *sweep-level* seed,
-    # the trial_seed calculation should happen BEFORE this objective is called, or we assume
-    # Optuna's internal seeding for trial.suggest_* is enough and `pl.seed_everything(None)` handles the rest.
-
-    # Let's assume `pl.seed_everything(trial_seed)` happens in `objective_wrapper` (as in previous main.py).
-    # Then `trial.suggest_*` will be overridden by GridSampler.
-    # The `torch.cuda.manual_seed(trial.number)` etc. are more specific than `pl.seed_everything`.
-    # It's generally best to let `pl.seed_everything` handle all of them.
-    
-    # If you want to keep trial-specific manual seeds *inside* objective:
-    # The most consistent way is to just use `pl.seed_everything(trial.number)` or derive
-    # a unique seed for the trial *within* this objective.
-    # Given the previous `objective_wrapper` had the `pl.seed_everything(trial_seed, workers=True)` call,
-    # we should rely on that and remove the `torch.cuda.manual_seed` lines here for consistency.
-    
-    # Let's keep `pl.seed_everything` call in `objective_wrapper` in `main.py`
-    # and remove the manual torch seeds from here. This makes the `objective` cleaner.
-
-    # --- Hyperparameter Retrieval from trial.suggest_ functions ---
-    # These will define the search space for Optuna
-    # alpha = trial.suggest_float("alpha", 0.7, 0.95)
-    # beta = trial.suggest_float("beta", 0.7, 0.95)
-    
-    # optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "SGD"])
-    optimizer_name = trial.suggest_categorical("optimizer", ["Adamax"])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "Adamax"])
     # Conditional hyperparameter suggestion based on optimizer
     if optimizer_name == "Adam":
         # learning_rate = trial.suggest_float("adam_lr", 1e-4, 2e-3, log=False)
@@ -108,13 +66,9 @@ def objective(
     l2_lower = trial.suggest_float("l2_lower", 100, 100, log=False)
     v2_lower = trial.suggest_float("v2_lower", 1e-3, 1e-3, log=False)
     l1_upper = trial.suggest_float("l1_upper", 0.06, 0.06, log=False)
-    # l1_upper = trial.suggest_float("l1_upper", 1, 100, log=False)
-    # v1_upper = 0.06
     v1_upper = trial.suggest_float("v1_upper", 0, 1000, log=False)
     l2_upper = trial.suggest_categorical("l2_upper", [0])
-    # trial.suggest_categorical("l2_upper", [0, 1, data_config["nb_hidden"]])
     v2_upper = trial.suggest_float("v2_upper", 0, 0, log=False)
-    # trial.suggest_float("v2_upper", 0, data_config["nb_hidden"], log=False)
 
     # Store Zenke config in a dict
     zenke_config = {
@@ -125,7 +79,7 @@ def objective(
         "l2_upper": l2_upper,
         "v2_upper": v2_upper,
     }
-    spike_grad_scale = trial.suggest_float("spike_grad_scale", 50.0, 50.0, log=False)
+    spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 100.0, log=False)
 
     # Initialize wandb for this trial
     wandb.init(
@@ -151,8 +105,6 @@ def objective(
         "hidden_features": data_config["nb_hidden"], # Ensure nb_hidden is in data_config
         "output_features": data_config["nb_outputs"],
         "data_config": data_config,
-        # "alpha": alpha,
-        # "beta": beta,
         "recurrent": recurrent_setting,
         "learning_rate": learning_rate,
         "loss_fn": loss_fn_instance,
@@ -165,7 +117,8 @@ def objective(
         model_args["spike_fn"] = SurrGradSpike.apply # Use SurrGradSpike.apply directly
     elif model_name_str == "ANN_with_LIF_output":
         model_args["spike_fn"] = None # No spikes for hidden layer in ANN
-
+        model_args["zenke_config"] = None # I think maybe this wasn't run fully but to revisit
+        model_args["spike_grad_scale"] = None # No spike grad scale for ANN
     model = model_class(**model_args)
 
     model.to(device)
@@ -198,7 +151,7 @@ def objective(
         raise optuna.exceptions.TrialPruned()
 
     # --- Evaluation ---
-    # I DON'T THINK WE NEED THIS, REMOVE?
+    # CLEAN UP NAMING AT END
     val_total_loss = trainer.callback_metrics.get("val_total_loss")
     if val_total_loss is None:
         val_total_loss = trainer.callback_metrics.get("val_loss", torch.tensor(float('inf'))).item()

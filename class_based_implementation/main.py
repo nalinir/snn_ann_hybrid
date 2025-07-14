@@ -16,11 +16,11 @@ from data_construction.shd_dataset import data_split_shd
 
 from class_based_implementation.train_model import objective, MODEL_CLASSES, LOSS_FUNCTIONS # Import mappings too
 
-from class_based_implementation.hparams_config import (
-    hyperparameter_definitions,
-    get_grid_search_space,
-    suggest_tpe_params
-)
+# from class_based_implementation.hparams_config import (
+#     hyperparameter_definitions,
+#     get_grid_search_space,
+#     suggest_tpe_params
+# )
 
 # Define which models to run experiments for
 models_to_run = [
@@ -84,23 +84,23 @@ def arg_parser():
     # Add more arguments as needed for your specific use case
     return parser.parse_args()
 
-def create_sampler(sampler_type, sweep_seed):
-    """Creates the appropriate Optuna sampler based on type."""
-    if sampler_type == "tpe":
-        print("Using TPESampler (Bayesian Optimization)")
-        return optuna.samplers.TPESampler(seed=sweep_seed)
-    elif sampler_type == "grid":
-        # Get the grid search space from the config file
-        grid_search_space = get_grid_search_space()
+# def create_sampler(sampler_type, sweep_seed):
+#     """Creates the appropriate Optuna sampler based on type."""
+#     if sampler_type == "tpe":
+#         print("Using TPESampler (Bayesian Optimization)")
+#         return optuna.samplers.TPESampler(seed=sweep_seed)
+#     elif sampler_type == "grid":
+#         # Get the grid search space from the config file
+#         grid_search_space = get_grid_search_space()
 
-        # Calculate total trials for the grid (for informative print)
-        total_grid_trials = 1
-        for param_values_list in grid_search_space.values():
-            total_grid_trials *= len(param_values_list)
-        print(f"Using GridSampler with {total_grid_trials} total combinations.")
-        return optuna.samplers.GridSampler(grid_search_space, seed=sweep_seed)
-    else:
-        raise ValueError(f"Unknown sampler type: {sampler_type}. Choose 'tpe' or 'grid'.")
+#         # Calculate total trials for the grid (for informative print)
+#         total_grid_trials = 1
+#         for param_values_list in grid_search_space.values():
+#             total_grid_trials *= len(param_values_list)
+#         print(f"Using GridSampler with {total_grid_trials} total combinations.")
+#         return optuna.samplers.GridSampler(grid_search_space, seed=sweep_seed)
+#     else:
+#         raise ValueError(f"Unknown sampler type: {sampler_type}. Choose 'tpe' or 'grid'.")
 
 
 def main():
@@ -122,11 +122,12 @@ def main():
     with open(config_file_path, "r") as f:
         data_config = json.load(f)
 
-    if num_classes is not None:
-        data_config["nb_outputs"] = num_classes
-    else:
-        num_classes = data_config["nb_outputs"]
-
+    # if num_classes is not None:
+    #     data_config["nb_outputs"] = num_classes # This logic isn't my favorite but we can revisit
+    # else:
+    if num_classes is None:
+        num_classes = data_config["nb_outputs"] 
+    
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -140,6 +141,7 @@ def main():
     )
     os.makedirs(save_dir_base, exist_ok=True)
     save_dir = os.path.join(save_dir_base, loss_type)
+    print(f"Results will be saved to: {save_dir}")
     os.makedirs(save_dir, exist_ok=True)
     # NEW FILE - Updated line
     if data == "shd":
@@ -154,25 +156,15 @@ def main():
         data, settings, num_workers=num_workers,pre_path=pre_path_data
         )
         search_space_grid_and_tpe_params = {
-            # "hidden_features": [32, 64, 128], # Must be even for hybrid models
-            # "alpha": [0.7, 0.8, 0.9],
-            # "beta": [0.7, 0.8, 0.9],
             "lr": [1e-3], # This should actually be 1e-3
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
-            "l2_lower": [15, 100], #use SHD paper instead
+            "l2_lower": [100], #use SHD paper instead
             "v2_lower": [0.001],
             "l1_upper": [0.06],
-            "v1_upper": [100],
+            "v1_upper": [100, 15],
             "l2_upper": [0],
             "v2_upper": [0],
-            # "l2_lower": [0],
-            # "v2_lower": [0],
-            # "l1_upper": [0],
-            # "v1_upper": [0],
-            # "l2_upper": [0],
-            # "v2_upper": [0],
-            # "zenke_enabled": [False],
             "spike_grad_scale": [10],
             "zenke_enabled": [True], # Zenke regularization is used in SHD paper
             # "attention_loss": [False]
@@ -258,18 +250,16 @@ def main():
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
             "l2_lower": [100],
             "v2_lower": [10e-3],
-            "l1_upper": [1],
+            "l1_upper": [1, 100],
             "v1_upper": [100],
             "l2_upper": [0],
             "v2_upper": [0],
             "zenke_enabled": [True],
-            "spike_grad_scale": [10, 50, 100]
+            "spike_grad_scale": [10]
         }
     else:
         raise ValueError(f"Unsupported dataset: {data}. Supported datasets are: {list(data_loaders_map.keys())}")
     # Define the search space for Grid Search and parameter ranges for Bayesian (TPE)
-
-
 
 
     # Main optimization loop
@@ -279,6 +269,7 @@ def main():
             allowed_recurrents = [True] # These models are designed to be recurrent
 
         for recurrent_setting in allowed_recurrents:
+            # These saves are not used for now, but could be useful later
             best_history = None
             best_config = None
             best_weights = None
@@ -288,12 +279,13 @@ def main():
             print(
                 f"Running optimization for model: {model_name}, recurrent={recurrent_setting}"
             )
-
+        
             model_name_adj = model_name + f"_rec_{recurrent_setting}"
+            
+            # More saving logic that's not really used right now
             model_save_dir = os.path.join(save_dir, model_name_adj)
             os.makedirs(model_save_dir, exist_ok=True)
             config_path = os.path.join(model_save_dir, "config.json")
-
             best_metric_value = -np.inf # Optuna maximizes, so -loss is maximized
             if os.path.exists(config_path):
                 with open(config_path, "r") as f:
@@ -302,7 +294,7 @@ def main():
                 best_metric_value = prev_best_config.get("best_val_acc", -np.inf)
                 print(f"Best metric from previous model: {best_metric_value:.4f}")
 
-            # Configure Optuna sampler based on user choice
+            # Sampler and optimization setup
             if sampler_type == "grid":
                 sampler = optuna.samplers.GridSampler(search_space=search_space_grid_and_tpe_params)
                 num_combinations = 1
@@ -312,9 +304,7 @@ def main():
             else: # Default to Bayesian (TPE)
                 sampler = optuna.samplers.TPESampler()
                 print("Using Bayesian Optimization (TPE).")
-            
-            pl.seed_everything(sweep_seed)
-            # study = optuna.create_study(direction="maximize", sampler=sampler)
+            pl.seed_everything(sweep_seed)  
             study = optuna.create_study(
                 direction="minimize", # or "maximize" if your objective is accuracy
                 pruner=optuna.pruners.MedianPruner(
@@ -324,20 +314,6 @@ def main():
                 sampler=sampler
             )
             def wrapped_objective_with_args(trial):
-                # params = {}
-                # if sampler_type == "tpe":
-                #     # Get TPE parameters from the helper function
-                #     params = suggest_tpe_params(trial)
-                # elif sampler_type == "grid":
-                #     # For GridSampler, trial.params already contains the combination for this trial.
-                #     # We just need to copy them to 'params' for consistency in how objective receives them.
-                #     for name in hyperparameter_definitions.keys(): # Use hyperparameter_definitions keys for all potential params
-                #         if name in trial.params: # Ensure the parameter was part of the grid combination
-                #             params[name] = trial.params[name]
-                #         # No 'else' needed here, as GridSampler ensures all parameters in its
-                #         # search_space (which is derived from hyperparameter_definitions) are present.
-                # else:
-                #     raise ValueError(f"Invalid sampler_type passed to objective_wrapper: {sampler_type}")
                 return objective(
                     trial=trial,
                     model_name_str=model_name,
@@ -352,8 +328,10 @@ def main():
                     sampler_type=sampler_type,
                 )
 
-            study.optimize(wrapped_objective_with_args, n_trials=n_trials)
+            study.optimize(wrapped_objective_with_args, n_trials=n_trials) # Maybe eventually set to None for grid search (or num combinations)
 
+
+            # Other saving logic that isn't really used right now
             best_trial = study.best_trial
             print(f"Best trial for {model_name} (recurrent={recurrent_setting}):")
             print(best_trial)

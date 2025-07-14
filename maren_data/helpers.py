@@ -17,6 +17,7 @@ import h5py
 from maren_data.CustomSpikeDataset import CustomSpikeDataset
 
 
+# Need to fix this for noise
 class ChannelJitter:
     def __init__(self, sigma=20):
         self.sigma = sigma
@@ -34,88 +35,88 @@ class SqueezeTransform:
         return np.squeeze(x)
 
 
-def pad_and_flatten_collate(batch):
-    # print("\n--- Inside pad_and_flatten_collate (Applying batch_first=True permutation) ---")
-    # print(f"Incoming raw batch type: {type(batch)}, Length: {len(batch)}") 
+# def pad_and_flatten_collate(batch):
+#     # print("\n--- Inside pad_and_flatten_collate (Applying batch_first=True permutation) ---")
+#     # print(f"Incoming raw batch type: {type(batch)}, Length: {len(batch)}") 
 
-    processed_batch_for_tonic_padding = [] 
+#     processed_batch_for_tonic_padding = [] 
 
-    for i, item in enumerate(batch):
-        # print(f"  Pre-conversion Check: Batch item {i}: Type={type(item)}")
+#     for i, item in enumerate(batch):
+#         # print(f"  Pre-conversion Check: Batch item {i}: Type={type(item)}")
         
-        if not isinstance(item, tuple) or len(item) != 2:
-            raise ValueError(
-                f"Batch item {i} is not a (data, label) tuple of length 2. "
-                f"Type: {type(item)}, Content: {item}"
-            )
+#         if not isinstance(item, tuple) or len(item) != 2:
+#             raise ValueError(
+#                 f"Batch item {i} is not a (data, label) tuple of length 2. "
+#                 f"Type: {type(item)}, Content: {item}"
+#             )
 
-        data, label = item 
+#         data, label = item 
 
-        if isinstance(data, np.ndarray):
-            data_tensor = torch.from_numpy(data).float()
-        elif isinstance(data, torch.Tensor):
-            data_tensor = data
-        else:
-            raise TypeError(f"Data part of item {i} is neither numpy.ndarray nor torch.Tensor. Type: {type(data)}")
+#         if isinstance(data, np.ndarray):
+#             data_tensor = torch.from_numpy(data).float()
+#         elif isinstance(data, torch.Tensor):
+#             data_tensor = data
+#         else:
+#             raise TypeError(f"Data part of item {i} is neither numpy.ndarray nor torch.Tensor. Type: {type(data)}")
 
-        if isinstance(label, (np.ndarray, np.generic)):
-            label_tensor = torch.from_numpy(np.array(label)).long()
-        elif isinstance(label, (int, float)):
-            label_tensor = torch.tensor(label).long()
-        elif isinstance(label, torch.Tensor):
-            label_tensor = label
-        else:
-            raise TypeError(f"Label part of item {i} is not a supported type. Type: {type(label)}")
+#         if isinstance(label, (np.ndarray, np.generic)):
+#             label_tensor = torch.from_numpy(np.array(label)).long()
+#         elif isinstance(label, (int, float)):
+#             label_tensor = torch.tensor(label).long()
+#         elif isinstance(label, torch.Tensor):
+#             label_tensor = label
+#         else:
+#             raise TypeError(f"Label part of item {i} is not a supported type. Type: {type(label)}")
 
-        processed_batch_for_tonic_padding.append((data_tensor, label_tensor))
+#         processed_batch_for_tonic_padding.append((data_tensor, label_tensor))
         
-        # print(f"    Converted item {i} (individual): Data shape={data_tensor.shape}, Label type={label_tensor.dtype}")
+#         # print(f"    Converted item {i} (individual): Data shape={data_tensor.shape}, Label type={label_tensor.dtype}")
 
 
-    # print(f"\n  Length of list passed to tonic.collation.PadTensors: {len(processed_batch_for_tonic_padding)}")
+#     # print(f"\n  Length of list passed to tonic.collation.PadTensors: {len(processed_batch_for_tonic_padding)}")
 
-    # Step 2: Call tonic.collation.PadTensors with batch_first=False (as it's likely fixed now)
-    # It returns (Time, Batch, Features) and (Batch) 
-    # THIS IS BECAUSE WE WANT PADDING BASED ON TIME DIMENSION
-    intermediate_samples_tensor, final_targets_tensor = \
-        tonic.collation.PadTensors(batch_first=False)(processed_batch_for_tonic_padding)
+#     # Step 2: Call tonic.collation.PadTensors with batch_first=False (as it's likely fixed now)
+#     # It returns (Time, Batch, Features) and (Batch) 
+#     # THIS IS BECAUSE WE WANT PADDING BASED ON TIME DIMENSION
+#     intermediate_samples_tensor, final_targets_tensor = \
+#         tonic.collation.PadTensors(batch_first=False)(processed_batch_for_tonic_padding)
 
-    # Step 3: Crucially, print the shapes of the tensors returned by PadTensors
-    # print(f"\n  *** Shapes Returned by tonic.collation.PadTensors (with batch_first=False) ***")
-    # print(f"  Intermediate Samples Tensor Shape: {intermediate_samples_tensor.shape}")
-    # print(f"  Targets Tensor Shape: {final_targets_tensor.shape}")
+#     # Step 3: Crucially, print the shapes of the tensors returned by PadTensors
+#     # print(f"\n  *** Shapes Returned by tonic.collation.PadTensors (with batch_first=False) ***")
+#     # print(f"  Intermediate Samples Tensor Shape: {intermediate_samples_tensor.shape}")
+#     # print(f"  Targets Tensor Shape: {final_targets_tensor.shape}")
     
-    # Confirm it's 3D before permuting, or handle higher dims
-    if intermediate_samples_tensor.dim() == 3:
-        # Permute to (Batch, Time, Features)
-        final_padded_samples_tensor = intermediate_samples_tensor.permute(1, 0, 2)
-        # print(f"  Permuted Samples Tensor Shape to (Batch, Time, Features): {final_padded_samples_tensor.shape}")
-    elif intermediate_samples_tensor.dim() == 4: # If it's (Time, Batch, Channels, Features) for example
-        # Permute to (Batch, Time, Channels, Features)
-        final_padded_samples_tensor = intermediate_samples_tensor.permute(1, 0, 2, 3)
-        # print(f"  Permuted Samples Tensor Shape to (Batch, Time, ...): {final_padded_samples_tensor.shape}")
-    else:
-        # If it's not 3D or 4D, you'll need to adjust the permute operation based on its actual dimensions
-        # Or raise an error to investigate further.
-        final_padded_samples_tensor = intermediate_samples_tensor # No permute if not 3D/4D, or if dims are unexpected
-        # print(f"  WARNING: Samples tensor not 3D/4D, skipping permute. Shape: {final_padded_samples_tensor.shape}")
+#     # Confirm it's 3D before permuting, or handle higher dims
+#     if intermediate_samples_tensor.dim() == 3:
+#         # Permute to (Batch, Time, Features)
+#         final_padded_samples_tensor = intermediate_samples_tensor.permute(1, 0, 2)
+#         # print(f"  Permuted Samples Tensor Shape to (Batch, Time, Features): {final_padded_samples_tensor.shape}")
+#     elif intermediate_samples_tensor.dim() == 4: # If it's (Time, Batch, Channels, Features) for example
+#         # Permute to (Batch, Time, Channels, Features)
+#         final_padded_samples_tensor = intermediate_samples_tensor.permute(1, 0, 2, 3)
+#         # print(f"  Permuted Samples Tensor Shape to (Batch, Time, ...): {final_padded_samples_tensor.shape}")
+#     else:
+#         # If it's not 3D or 4D, you'll need to adjust the permute operation based on its actual dimensions
+#         # Or raise an error to investigate further.
+#         final_padded_samples_tensor = intermediate_samples_tensor # No permute if not 3D/4D, or if dims are unexpected
+#         # print(f"  WARNING: Samples tensor not 3D/4D, skipping permute. Shape: {final_padded_samples_tensor.shape}")
 
 
-    # Step 4: Apply flattening if necessary
-    # This might apply if, after permutation, you still have extra feature dimensions
-    # e.g., if you have (Batch, Time, Channels, Height, Width) and want (Batch, Time, C*H*W)
-    if final_padded_samples_tensor.dim() > 3: # Checks for (Batch, Time, C, H, W) scenario
-        # Flatten from the 3rd dimension onwards (Channels, Height, Width)
-        final_padded_samples_tensor = final_padded_samples_tensor.flatten(start_dim=2) 
-        # print(f"  Flattened samples to shape: {final_padded_samples_tensor.shape}")
+#     # Step 4: Apply flattening if necessary
+#     # This might apply if, after permutation, you still have extra feature dimensions
+#     # e.g., if you have (Batch, Time, Channels, Height, Width) and want (Batch, Time, C*H*W)
+#     if final_padded_samples_tensor.dim() > 3: # Checks for (Batch, Time, C, H, W) scenario
+#         # Flatten from the 3rd dimension onwards (Channels, Height, Width)
+#         final_padded_samples_tensor = final_padded_samples_tensor.flatten(start_dim=2) 
+#         # print(f"  Flattened samples to shape: {final_padded_samples_tensor.shape}")
 
 
-    # print(f"\nFinal Shape of samples batch (after all operations): {final_padded_samples_tensor.shape}")
-    # print(f"Final Shape of labels batch: {final_targets_tensor.shape}")
-    # print(f"--- Exiting pad_and_flatten_collate ---")
+#     # print(f"\nFinal Shape of samples batch (after all operations): {final_padded_samples_tensor.shape}")
+#     # print(f"Final Shape of labels batch: {final_targets_tensor.shape}")
+#     # print(f"--- Exiting pad_and_flatten_collate ---")
 
-    # WE ALSO WANT TO PAD AT THE BATCH LEVEL FOR THE LAST BATCH
-    return final_padded_samples_tensor, final_targets_tensor
+#     # WE ALSO WANT TO PAD AT THE BATCH LEVEL FOR THE LAST BATCH
+#     return final_padded_samples_tensor, final_targets_tensor
 
 def get_data_loaders(
     x_data,
@@ -206,13 +207,23 @@ def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100, max_t
         ]
         if noise:
             transform_list.append(ChannelJitter(sigma=20))
-        transform_list.append(transforms.Downsample(
-                spatial_factor=encoding_dim / np.prod(sensor_size)
-            ),
-        )  # downsample to encoding_dim
+        # maybe adjust the downsample so it's only done if encoding_dim < np.prod(sensor_size)
+        if encoding_dim < np.prod(sensor_size):
+            transform_list.append(transforms.Downsample(
+                    spatial_factor=encoding_dim / np.prod(sensor_size)
+                ),
+            )  # downsample to encoding_dim
+            print(f"Downsampling from {np.prod(sensor_size)} to {encoding_dim} dimensions.")
+        elif encoding_dim > np.prod(sensor_size):
+            raise ValueError(
+                f"Encoding dimension {encoding_dim} cannot be larger than the product of sensor size {np.prod(sensor_size)}."
+            )
+        else:
+            print(f"Encoding dimension {encoding_dim} matches the product of sensor size {np.prod(sensor_size)}. No downsampling needed.")
         # If max_time is provided, crop to that time (in microseconds)
         if max_time is not None:
             transform_list.append(transforms.CropTime(max=max_time * 1e6))
+            print(f"Cropping time to {max_time} seconds ({max_time * 1e6} microseconds).")
         transform_list.append(
             transforms.ToFrame(
                 sensor_size=(encoding_dim, 1, 1),
@@ -220,6 +231,7 @@ def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100, max_t
                 include_incomplete=True,
             )
         )
+        # Maybe review the incomplete thing if things still look weird
         transform_list.append(SqueezeTransform())
         transform = tonic.transforms.Compose(transform_list)
     else:
@@ -229,7 +241,7 @@ def get_transform(data_set_name, sensor_size, time_step, encoding_dim=100, max_t
 
 
 def get_tonic_dataset(
-    data_set_name, time_step, mode=None, transform=False, encoding_dim=100,pre_path='', max_time=None, noise=False
+    data_set_name, time_step, mode=None, transform=False, encoding_dim=100,pre_path='', max_time=None, noise=False, num_workers=2
 ):
     """
     Download tonic dataset.
@@ -274,7 +286,7 @@ def get_tonic_dataset(
     )
     print(f'data already downloaded: {dataset._check_exists()}')
 
-    dataloader = DataLoader(dataset, num_workers=2)
+    dataloader = DataLoader(dataset, num_workers=num_workers)
     print(next(iter(dataloader)))
 
     # # also apply random rotations (for image data in training set)
@@ -294,7 +306,7 @@ def get_tonic_dataset(
 
     return cached_dataset
 
-def train_val_split(dataset,batch_size, num_workers=0):
+def train_val_split(dataset,batch_size, num_workers=0, percent_data=1.0):
     """
     split tonic 'training' set into actual training and validation sets
     """
@@ -314,15 +326,14 @@ def train_val_split(dataset,batch_size, num_workers=0):
     # np.random.shuffle(indices)
     # train_indices = indices[:train_size]
     # val_indices = indices[train_size:]
-    # if percent_data < 1.0:
-    #     # Calculate the number of samples to keep based on percent_data
-    #     num_samples = int(len(train_indices) * percent_data)
-    #     train_indices = train_indices[:num_samples]
-    #     val_indices = val_indices[:num_samples]
+
+    if percent_data < 1.0:
+        # Calculate the number of samples to keep based on percent_data and set/save deterministically
+        num_samples = int(len(train_indices) * percent_data)
+        train_indices = train_indices[:num_samples]
 
     train_dataset= Subset(dataset, train_indices)
     val_dataset = Subset(dataset, val_indices)
-
     trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,collate_fn=tonic.collation.PadTensors(batch_first=True), num_workers=num_workers)
     valloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,collate_fn=tonic.collation.PadTensors(batch_first=True), num_workers=num_workers)
 
@@ -543,7 +554,8 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             encoding_dim=settings["nb_inputs"],
             pre_path=pre_path,
             max_time=settings["max_time"],
-            noise=settings["noise"]
+            noise=settings["noise"],
+            num_workers=num_workers
 
         )
         cached_testset = get_tonic_dataset(
@@ -554,18 +566,20 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             encoding_dim=settings["nb_inputs"],
             pre_path=pre_path,
             max_time=settings["max_time"],
-            noise=settings["noise"]
+            noise=settings["noise"],
+            num_workers=num_workers
         )
-        if settings["percent_data"] < 1.0:
-            # Calculate the number of samples to keep based on percent_data
-            num_train_samples = int(len(cached_trainset) * settings["percent_data"])
-            num_test_samples = int(len(cached_testset) * settings["percent_data"])
-            # Assign the samples selected randomly
-            np.random.seed(42)
-            train_indices = np.random.choice(len(cached_trainset), num_train_samples, replace=False)
-            test_indices = np.random.choice(len(cached_testset), num_test_samples, replace=False)
-            cached_trainset = Subset(cached_trainset, train_indices)
-            cached_testset = Subset(cached_testset, test_indices)
+
+        # if settings["percent_data"] < 1.0:
+        #     # Calculate the number of samples to keep based on percent_data
+        #     num_train_samples = int(len(cached_trainset) * settings["percent_data"])
+        #     num_test_samples = int(len(cached_testset) * settings["percent_data"])
+        #     # Assign the samples selected randomly
+        #     np.random.seed(42)
+        #     train_indices = np.random.choice(len(cached_trainset), num_train_samples, replace=False)
+        #     test_indices = np.random.choice(len(cached_testset), num_test_samples, replace=False)
+        #     cached_trainset = Subset(cached_trainset, train_indices)
+        #     cached_testset = Subset(cached_testset, test_indices)
 
         # pad time dimension for test and training set -> batch_first=False
         testloader = DataLoader(
@@ -577,7 +591,7 @@ def choose_data_params(data_set_name, settings, num_workers=4,pre_path=""):
             # drop_last=True,  # drop last batch if not full
         )
 
-        trainloader,valloader=train_val_split(cached_trainset,settings["batch_size"], num_workers)
+        trainloader,valloader=train_val_split(cached_trainset,settings["batch_size"], num_workers, percent_data=settings["percent_data"])
 
         #nb_steps = next(iter(trainloader))[0].size()[0]  # 250
         # nb_steps=None
