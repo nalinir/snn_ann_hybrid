@@ -32,7 +32,7 @@ class BaseTemporalModel(pl.LightningModule):
                  dtype: torch.dtype = torch.float32,
                  max_logit: bool = True,
                  shuffle_neurons: bool = False, # New property
-                 new_class_implementation: str = "Adjusted beta multiplier for syn" # Tracking for wandb
+                 new_class_implementation: str = "Fixed units" # Tracking for wandb
                 ):
         super().__init__()
 
@@ -263,7 +263,7 @@ class BaseTemporalModel(pl.LightningModule):
             neurons_spiked_at_least_once_mask = (spikes_per_neuron_per_sample > 0).float()
             num_neurons_spiked_per_sample = torch.sum(neurons_spiked_at_least_once_mask, dim=1) #(Batch,)
 
-            percent_snn_neurons_spiking_per_sample = torch.mean(num_neurons_spiked_per_sample, dim=0) #Scalar
+            percent_snn_neurons_spiking_per_sample = torch.mean(num_neurons_spiked_per_sample/self.num_snn_neurons_in_layer, dim=0) #(N_snn)
             avg_spikes_per_neuron = torch.mean(torch.mean(spikes_per_neuron_per_sample, dim=1), dim=0) # (Batch,) neuron average then total average (mean probably also ok)
 
             # Zenke and Vogels regularization

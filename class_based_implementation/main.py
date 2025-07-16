@@ -81,7 +81,13 @@ def arg_parser():
     parser.add_argument("--sweep_seed", type=int, help="Random seed for reproducibility")
     parser.add_argument("--num_workers", type=int, help="Number of workers for data loading", default=4)
     parser.add_argument("--chosen_model", type=str, help="Model to run, otherwise all models", default=None)
-    # Add more arguments as needed for your specific use case
+    parser.add_argument("--nb_hidden", type=int, help="Number of neurons", default=None)
+    parser.add_argument("--percent_data", type=int, help="Percent data to retain for training", default=None)
+    parser.add_argument(
+        "--no_non_recurrent",
+        action="store_true",  # Set to True if the flag is present
+        help="Flag to disable recurrent connections (or some other boolean option)",
+    )    # Add more arguments as needed for your specific use case
     return parser.parse_args()
 
 # def create_sampler(sampler_type, sweep_seed):
@@ -106,8 +112,8 @@ def arg_parser():
 def main():
     global models_to_run
     args = arg_parser()
-    data, dim_manifold, n_trials, loss_type, sampler_type, sweep_seed, num_workers, chosen_model = (
-        args.data, args.dim_manifold, args.n_trials, args.loss_type, args.sampler_type, args.sweep_seed, args.num_workers, args.chosen_model
+    data, dim_manifold, n_trials, loss_type, sampler_type, sweep_seed, num_workers, chosen_model, nb_hidden, percent_data, no_non_recurrent = (
+        args.data, args.dim_manifold, args.n_trials, args.loss_type, args.sampler_type, args.sweep_seed, args.num_workers, args.chosen_model, args.nb_hidden, args.percent_data, args.no_non_recurrent
     )
     num_classes = args.num_classes
     if chosen_model is not None:
@@ -128,6 +134,13 @@ def main():
     if num_classes is None:
         num_classes = data_config["nb_outputs"] 
     
+    # Adjust these parameters based on sweep
+    if nb_hidden:
+        data_config['nb_hidden'] = nb_hidden
+    if percent_data:
+        data_config['percent_data'] = percent_data
+
+
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -156,7 +169,7 @@ def main():
         data, settings, num_workers=num_workers,pre_path=pre_path_data
         )
         search_space_grid_and_tpe_params = {
-            "lr": [1e-3], # This should actually be 1e-3
+            "adam_lr": [2e-3], # SNN default - only SNN now
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
             "l2_lower": [100], #use SHD paper instead
@@ -169,7 +182,7 @@ def main():
             "zenke_enabled": [True], # Zenke regularization is used in SHD paper
             # "attention_loss": [False]
         }
-        if models_to_run == ["ANN"]:
+        if models_to_run == ["ANN_with_LIF_output"]:
             search_space_grid_and_tpe_params['l2_lower'] = [None] # No regularization for ANN
             search_space_grid_and_tpe_params['v2_lower'] = [None]
             search_space_grid_and_tpe_params['l1_upper'] = [None]
@@ -178,6 +191,11 @@ def main():
             search_space_grid_and_tpe_params['v2_upper'] = [None]
             search_space_grid_and_tpe_params['spike_grad_scale'] = [None] # No spike grad scale for ANN
             search_space_grid_and_tpe_params['zenke_enabled'] = [None] # No zenke enabled for ANN
+            search_space_grid_and_tpe_params['adam_lr'] = [1e-4]
+        elif models_to_run == ["Hybrid_RNN_SNN_V1_same_layer"]:
+            search_space_grid_and_tpe_params['adam_lr'] = [5e-4]       
+        elif models_to_run == ["Hybrid_RNN_SNN_rec"]:
+            search_space_grid_and_tpe_params['adam_lr'] = [2e-3]
 
     elif data == "shd_old":
         data_loaders_path = os.path.join(save_dir_base, "data_loaders.pkl")
@@ -264,9 +282,11 @@ def main():
 
     # Main optimization loop
     for model_name in models_to_run:
-        allowed_recurrents = [True, False]
-        if model_name in ["Hybrid_RNN_SNN_V1_same_layer"]:
+
+        if model_name in ["Hybrid_RNN_SNN_V1_same_layer"] or no_non_recurrent == True:
             allowed_recurrents = [True] # These models are designed to be recurrent
+        else:
+            allowed_recurrents = [True, False]
 
         for recurrent_setting in allowed_recurrents:
             # These saves are not used for now, but could be useful later

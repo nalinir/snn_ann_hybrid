@@ -1,7 +1,7 @@
 {
-    "nb_inputs": 20,
+    "nb_inputs": 100,
     "nb_hidden": 4,
-    "nb_outputs": 10,
+    "nb_outputs": 2,
     "time_step": 0.001,
     "epochs": 100,
     "nb_steps": 100,

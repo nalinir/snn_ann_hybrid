@@ -6,7 +6,7 @@ def bound_regularizer(spk, v_t, l_t, exp, upper_bound=True, population_level=Tru
     # B, T, N = spk.shape
     cnt = torch.sum(spk, dim=1)  # get spikecount over time (B, N) -> do the batch level averaging last!
     if upper_bound:
-        diff = cnt-v_t # (N,)
+        diff = cnt-v_t # (B, N)
         mean_diff = torch.mean(diff, dim=1) # (B,)
         relu_result = torch.relu(mean_diff)**exp #(B,)
         # Then take the average
@@ -45,6 +45,7 @@ def regularization_loss_zenke(spks, config):
     )
     return lower_l2 + upper_l1 + upper_l2, lower_l2, upper_l1, upper_l2
 
+# THIS IS PROBABLY FINE NOW BUT STILL EQUIVALENT:
 
 ## GEMINI:
 # --- Reintroduced regularization_loss_zenke function using class-based regularizers ---

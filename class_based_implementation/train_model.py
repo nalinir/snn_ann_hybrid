@@ -53,7 +53,7 @@ def objective(
     # Conditional hyperparameter suggestion based on optimizer
     if optimizer_name == "Adam":
         # learning_rate = trial.suggest_float("adam_lr", 1e-4, 2e-3, log=False)
-        learning_rate = trial.suggest_float("adam_lr", 1e-3, 1e-3, log=False)
+        learning_rate = trial.suggest_float("adam_lr", 1e-4, 1e-2, log=False)
         momentum = 0.0
     elif optimizer_name == "SGD":
         learning_rate = trial.suggest_float("sgd_lr", 1e-2, 0.5, log=False)
@@ -65,25 +65,31 @@ def objective(
         else:
             learning_rate = trial.suggest_float("adamax_lr", 1e-3, 1e-3, log=False)
         momentum = 0.0
-        
-    # Zenke regularization specific hyperparameters
-    l2_lower = trial.suggest_float("l2_lower", 100, 100, log=False)
-    v2_lower = trial.suggest_float("v2_lower", 1e-3, 1e-3, log=False)
-    l1_upper = trial.suggest_float("l1_upper", 0.06, 0.06, log=False)
-    v1_upper = trial.suggest_float("v1_upper", 0, 1000, log=False)
-    l2_upper = trial.suggest_categorical("l2_upper", [0])
-    v2_upper = trial.suggest_float("v2_upper", 0, 0, log=False)
+    
+    if model_name_str != "ANN_with_LIF_output":
+        # Zenke regularization specific hyperparameters
+        l2_lower = trial.suggest_float("l2_lower", 100, 100, log=False)
+        v2_lower = trial.suggest_float("v2_lower", 1e-3, 1e-3, log=False)
+        l1_upper = trial.suggest_float("l1_upper", 0.06, 0.06, log=False)
+        v1_upper = trial.suggest_float("v1_upper", 0, 1000, log=False)
+        l2_upper = trial.suggest_categorical("l2_upper", [0])
+        v2_upper = trial.suggest_float("v2_upper", 0, 0, log=False)
 
-    # Store Zenke config in a dict
-    zenke_config = {
-        "l2_lower": l2_lower,
-        "v2_lower": v2_lower,
-        "l1_upper": l1_upper,
-        "v1_upper": v1_upper,
-        "l2_upper": l2_upper,
-        "v2_upper": v2_upper,
-    }
-    spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 100.0, log=False)
+        # Store Zenke config in a dict
+        zenke_config = {
+            "l2_lower": l2_lower,
+            "v2_lower": v2_lower,
+            "l1_upper": l1_upper,
+            "v1_upper": v1_upper,
+            "l2_upper": l2_upper,
+            "v2_upper": v2_upper,
+        }
+        spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 100.0, log=False)
+        spike_fn = SurrGradSpike.apply
+    else:
+        zenke_config = None
+        spike_grad_scale = None
+        spike_fn = None
 
     # Initialize wandb for this trial
     wandb.init(
@@ -106,7 +112,7 @@ def objective(
     # --- Model Instantiation ---
     model_args = {
         "input_features": data_config["nb_inputs"],
-        "hidden_features": data_config["nb_hidden"], # Ensure nb_hidden is in data_config
+        "hidden_features": data_config["nb_hidden"],
         "output_features": data_config["nb_outputs"],
         "data_config": data_config,
         "recurrent": recurrent_setting,
@@ -115,26 +121,27 @@ def objective(
         "zenke_config": zenke_config,
         "optimizer_name": optimizer_name,
         "spike_grad_scale": spike_grad_scale,
-        "model_type": model_name_str
+        "model_type": model_name_str,
+        "spike_fn": spike_fn
     }
 
-    if model_name_str in ["SNN", "Hybrid_RNN_SNN_rec", "Hybrid_RNN_SNN_V1_same_layer"]:
-        model_args["spike_fn"] = SurrGradSpike.apply # Use SurrGradSpike.apply directly
-    elif model_name_str == "ANN_with_LIF_output":
-        model_args["spike_fn"] = None # No spikes for hidden layer in ANN
-        model_args["zenke_config"] = None # I think maybe this wasn't run fully but to revisit
-        model_args["spike_grad_scale"] = None # No spike grad scale for ANN
+    # if model_name_str in ["SNN", "Hybrid_RNN_SNN_rec", "Hybrid_RNN_SNN_V1_same_layer"]:
+    #     model_args["spike_fn"] = SurrGradSpike.apply # Use SurrGradSpike.apply directly
+    # elif model_name_str == "ANN_with_LIF_output":
+    #     model_args["spike_fn"] = None # No spikes for hidden layer in ANN
+    #     # model_args["zenke_config"] = None # I think maybe this wasn't run fully but to revisit
+        # model_args["spike_grad_scale"] = None # No spike grad scale for ANN
     model = model_class(**model_args)
 
     model.to(device)
     # After model instantiation, before training
-    print("Model expects input_features:", model.input_features)
-    print("Model w1 shape:", model.w1.shape)
+    # print("Model expects input_features:", model.input_features)
+    # print("Model w1 shape:", model.w1.shape)
 
     # Get a batch from your train_loader to check input shape
-    xb, yb = next(iter(train_loader))
-    print("Sample batch xb shape:", xb.shape)
-    print("Sample batch yb shape:", yb.shape)
+    # xb, yb = next(iter(train_loader))
+    # print("Sample batch xb shape:", xb.shape)
+    # print("Sample batch yb shape:", yb.shape)
     # --- PyTorch Lightning Trainer Setup ---
     trainer = pl.Trainer(
         max_epochs=data_config["epochs"],
