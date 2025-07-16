@@ -9,7 +9,11 @@ import optuna # Make sure optuna is imported
 import numpy as np # For pl.seed_everything
 
 # Import your models (assuming these are defined in snn_hybrid_models.py)
-from class_based_implementation.snn_hybrid_models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, SurrGradSpike
+# from class_based_implementation.snn_hybrid_models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, SurrGradSpike
+
+# Streamlined 
+from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer
+from class_based_implementation.surr_grad import SurrGradSpike
 
 from old_implementation.loss_landscape import visualize_loss_landscape_3d
 
@@ -110,7 +114,8 @@ def objective(
         "loss_fn": loss_fn_instance,
         "zenke_config": zenke_config,
         "optimizer_name": optimizer_name,
-        "spike_grad_scale": spike_grad_scale
+        "spike_grad_scale": spike_grad_scale,
+        "model_type": model_name_str
     }
 
     if model_name_str in ["SNN", "Hybrid_RNN_SNN_rec", "Hybrid_RNN_SNN_V1_same_layer"]:

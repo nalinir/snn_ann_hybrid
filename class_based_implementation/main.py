@@ -245,7 +245,7 @@ def main():
             # "hidden_features": [32, 64, 128], # Must be even for hybrid models
             # "alpha": [0.7, 0.8, 0.9],
             # "beta": [0.7, 0.8, 0.9],
-            "adam_lr": [1e-2],
+            "adam_lr": [0.05],
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
             "l2_lower": [100],

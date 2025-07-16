@@ -3,167 +3,10 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torchmetrics.classification import Accuracy
-from class_based_implementation.Regularizers import UpperBoundL1, UpperBoundL2, LowerBoundL2
 
-# --- Zenke's SurrGradSpike Function (Maren implementation) ---
-class SurrGradSpike(torch.autograd.Function):
-    """
-    Here we implement our spiking nonlinearity which also implements
-    the surrogate gradient. By subclassing torch.autograd.Function,
-    we will be able to use all of PyTorch's autograd functionality.
-    Here we use the normalized negative part of a fast sigmoid
-    as this was done in Zenke & Ganguli (2018).
-    """
+from class_based_implementation.surr_grad import SurrGradSpike
+from class_based_implementation.zenke_regularizer import regularization_loss_zenke
 
-    @staticmethod
-    def forward(ctx, input, scale): # scale added as an argument
-        ctx.scale = scale
-        ctx.save_for_backward(input)
-        out = torch.zeros_like(input)
-        out[input > 0] = 1.0
-        return out
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        (input,) = ctx.saved_tensors
-        grad_input = grad_output.clone()
-        grad = grad_input / (ctx.scale * torch.abs(input) + 1.0) ** 2
-        return grad, None # Return None for the scale gradient as it's not a learnable parameter here
-
-
-# # --- Attention Mechanism Loss ---
-# def parameter_free_attention(mem, n):
-#     # Input current should be the membrane potential for a given neuron
-#     # Threshold is 1 for this model (just don't do mthr)
-#     # Other should be 0
-
-
-#     # The membrane potential for each timestep has shape (batch, nb_hidden)
-#     first_part = (1-mem)**2
-#     # This is just the resulting membrane potential from all other neurons other than a given neuron
-#     second_part_interim = (0-mem)**2
-#     total_sum_mem = torch.sum(second_part_interim)
-#     second_part = (total_sum_mem - second_part_interim)/(n-1)
-#     # We take all except a given index and then take the mean
-#     return second_part + first_part
-
-# def attention_loss(mem, w1, n, config):
-#     """
-#     Computes the attention loss with L2 regularization.
-#     """
-#     # mem should be of shape (batch, nb_hidden)
-#     # n is the number of neurons in the layer
-#     ## To allow for L2 regularization for model
-#     if mem is None:
-#         attn_loss = 0
-#     else:
-#         attn_loss = torch.sum(parameter_free_attention(mem, n))
-#     l2_loss = torch.sum(config["l2"] * (w1**2))
-#     return attn_loss + l2_loss
-
-
-# # --- Regularization Modules (Unchanged) ---
-# NOW -> ONLY SNN SPIKES SHOULD BE INPUT! NO OTHER EXTRA DIMENSION FOR ANN!
-def bound_regularizer(spk, v_t, l_t, exp, upper_bound=True, population_level=True):
-    # B, T, N = spk.shape
-    cnt = torch.sum(spk, dim=1)  # get spikecount over time (B, N) -> do the batch level averaging last!
-    if upper_bound:
-        diff = cnt-v_t # (N,)
-        mean_diff = torch.mean(diff, dim=1) # (B,)
-        relu_result = torch.relu(mean_diff)**exp #(B,)
-        # Then take the average
-        return l_t * torch.mean(relu_result) # I think the -1 was just a typo/artifact????
-    else: # lower bound
-        r_diff = torch.relu(v_t - cnt) # (B, N)
-        exp_r_diff = torch.pow(r_diff, exp) # (B, N)
-        mean_diff = torch.mean(exp_r_diff, dim=1) # (B,)
-        return l_t * torch.mean(mean_diff)
-
-def regularization_loss_zenke(spks, config):
-    lower_l2 = bound_regularizer(
-        spks,
-        config["v2_lower"],
-        config["l2_lower"],
-        2,
-        upper_bound=False,
-        population_level=False,
-    )
-    
-    upper_l1 = bound_regularizer(
-        spks,
-        config["v1_upper"],
-        config["l1_upper"],
-        1,
-        upper_bound=True,
-        population_level=True,
-    )
-    upper_l2 = bound_regularizer(
-        spks,
-        config["v2_upper"],
-        config["l2_upper"],
-        2,
-        upper_bound=True,
-        population_level=False,
-    )
-    return lower_l2 + upper_l1 + upper_l2, lower_l2, upper_l1, upper_l2
-
-## GEMINI:
-# --- Reintroduced regularization_loss_zenke function using class-based regularizers ---
-# def regularization_loss_zenke(spks, config):
-#     """
-#     Calculates Zenke-style regularization loss using class-based regularizers.
-
-#     Args:
-#         spks (torch.Tensor): The spike tensor from the hidden layer (Batch, Time, Hidden).
-#         config (dict): A dictionary containing regularization parameters like:
-#                        "v2_lower", "l2_lower" for lower L2 bound
-#                        "v1_upper", "l1_upper" for upper L1 bound
-#                        "v2_upper", "l2_upper" for upper L2 bound
-#     Returns:
-#         torch.Tensor: The total regularization loss.
-#     """
-#     total_reg_loss = torch.tensor(0.0, device=spks.device)
-
-#     # Initialize and apply LowerBoundL2
-#     # In original `bound_regularizer`, `population_level=False` meant `cnt = torch.sum(spk, dim=0)`
-#     # which results in (Time, Units) if spk is (B,T,N). This was then averaged.
-#     # To mimic this with ActivityRegularizer, if `spks` is (B,T,N), then `sum(dim=1)` makes it (B,N).
-#     # Setting `dims=False` in ActivityRegularizer means no further averaging is done, so it's (B,N).
-#     # Then `calc_regloss` applies `torch.mean` over the entire (B,N) tensor.
-#     # This is equivalent to taking mean over (0,1) for the (B,N) cnt.
-#     # So `dims=False` is the correct equivalent here for "per-neuron" in your original sense.
-#     # THIS IS THE PROBLEM! g
-#     if config.get("l2_lower", 0) != 0:
-#         lower_l2_reg = LowerBoundL2(
-#             strength=config["l2_lower"],
-#             threshold=config["v2_lower"],
-#             dims=False # Corresponds to your original `population_level=False`
-#         )
-#         total_reg_loss += lower_l2_reg(spks)
-
-#     # Initialize and apply UpperBoundL1
-#     # In original `bound_regularizer`, `population_level=True` meant `cnt = torch.mean(spk, dim=(0, 1))`
-#     # which results in (N,). With ActivityRegularizer, `sum(dim=1)` yields (B,N).
-#     # Then `dims=-1` averages over N, resulting in (B,).
-#     # The final `torch.mean` in `calc_regloss` averages over B. This is the closest match.
-#     if config.get("l1_upper", 0) != 0:
-#         upper_l1_reg = UpperBoundL1(
-#             strength=config["l1_upper"],
-#             threshold=config["v1_upper"],
-#             dims=-1 # Corresponds to your original `population_level=True`
-#         )
-#         total_reg_loss += upper_l1_reg(spks)
-
-#     # Initialize and apply UpperBoundL2
-#     if config.get("l2_upper", 0) != 0:
-#         upper_l2_reg = UpperBoundL2(
-#             strength=config["l2_upper"],
-#             threshold=config["v2_upper"],
-#             dims=False # Corresponds to your original `population_level=False`
-#         )
-#         total_reg_loss += upper_l2_reg(spks)
-        
-#     return total_reg_loss
 
 # --- Base Class for Shared Functionality (Modified for new spiking metric) ---
 class BaseTemporalModel(pl.LightningModule):
@@ -261,7 +104,7 @@ class BaseTemporalModel(pl.LightningModule):
 
         for t in range(h2_input.shape[1]):
             new_flt = self.alpha * flt + h2_input[:, t]
-            new_out = self.beta_out * out + flt
+            new_out = self.beta_out * out + (1 - self.beta_out) * flt
 
             flt = new_flt
             out = new_out
@@ -269,27 +112,27 @@ class BaseTemporalModel(pl.LightningModule):
             out_rec.append(out)
         return torch.stack(out_rec, dim=1)
 
-    def permute_batch_dim(self, inputs):
-        permute_order = list(np.arange(len(inputs.size())))
-        permute_order[:2] = [1, 0]
+    # def permute_batch_dim(self, inputs):
+    #     permute_order = list(np.arange(len(inputs.size())))
+    #     permute_order[:2] = [1, 0]
 
-        inputs = inputs.permute(permute_order)
+    #     inputs = inputs.permute(permute_order)
 
-        return inputs
+    #     return inputs
 
-    # To deal with the SHD case where input > 3 dimensions
-    def _prep_forward(self, inputs):
-        if len(inputs.size()) > 3:
-            print("Input shape before reshape:", inputs.size())
-            inputs = self.permute_batch_dim(
-                inputs
-            )  # since time dim was padded before -> now set batch first
-            sz = inputs.size()
-            print("Input shape after permutation:", inputs.size())
-            a, nb_steps = sz[0], sz[1]
-            inputs = inputs.reshape((a, nb_steps, -1))
-            print("Input shape after reshape:", inputs.size())
-        return inputs
+    # # To deal with the SHD case where input > 3 dimensions
+    # def _prep_forward(self, inputs):
+    #     if len(inputs.size()) > 3:
+    #         print("Input shape before reshape:", inputs.size())
+    #         inputs = self.permute_batch_dim(
+    #             inputs
+    #         )  # since time dim was padded before -> now set batch first
+    #         sz = inputs.size()
+    #         print("Input shape after permutation:", inputs.size())
+    #         a, nb_steps = sz[0], sz[1]
+    #         inputs = inputs.reshape((a, nb_steps, -1))
+    #         print("Input shape after reshape:", inputs.size())
+    #     return inputs
 
     def _common_step(self, batch, step_type: str):
         inputs, targets = batch
@@ -512,8 +355,6 @@ class Hybrid_RNN_SNN_rec(BaseTemporalModel):
                  hidden_features: int,
                  output_features: int,
                  data_config: dict,
-                #  alpha: float,
-                #  beta: float,
                  spike_fn = None,
                  recurrent: bool = True,
                  learning_rate: float = 1e-3,
@@ -536,8 +377,6 @@ class Hybrid_RNN_SNN_rec(BaseTemporalModel):
             input_features=input_features,
             hidden_features=hidden_features,
             output_features=output_features,
-            # alpha=alpha,
-            # beta=beta,
             data_config=data_config,
             spike_fn=spike_fn,
             recurrent=recurrent,
@@ -642,8 +481,6 @@ class Hybrid_RNN_SNN_V1_same_layer(BaseTemporalModel):
                  input_features: int,
                  hidden_features: int,
                  output_features: int,
-                #  alpha: float,
-                #  beta: float,
                  data_config: dict,
                  spike_fn = None,
                  recurrent: bool = True,
@@ -667,8 +504,6 @@ class Hybrid_RNN_SNN_V1_same_layer(BaseTemporalModel):
             input_features=input_features,
             hidden_features=hidden_features,
             output_features=output_features,
-            # alpha=alpha,
-            # beta=beta,
             data_config=data_config,
             spike_fn=spike_fn,
             recurrent=recurrent,
