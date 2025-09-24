@@ -7,12 +7,14 @@ from torchmetrics.classification import Accuracy
 import wandb
 import optuna # Make sure optuna is imported
 import numpy as np # For pl.seed_everything
+from pytorch_lightning.callbacks import ModelCheckpoint
+import os
 
 # Import your models (assuming these are defined in snn_hybrid_models.py)
 # from class_based_implementation.snn_hybrid_models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, SurrGradSpike
 
 # Streamlined 
-from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer
+from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer, Hybrid_NSN_SNN_V1_Flexible_Spiking
 from class_based_implementation.surr_grad import SurrGradSpike
 
 from old_implementation.loss_landscape import visualize_loss_landscape_3d
@@ -21,8 +23,12 @@ from old_implementation.loss_landscape import visualize_loss_landscape_3d
 MODEL_CLASSES = {
     "SNN": SNN,
     "ANN_with_LIF_output": ANN_with_LIF_output,
+    "NSN_with_LIF_output": NSN_with_LIF_output,
     "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec,
+    "Hybrid_NSN_SNN_rec": Hybrid_NSN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
+    "Hybrid_NSN_SNN_V1_same_layer": Hybrid_NSN_SNN_V1_same_layer,
+    "Hybrid_NSN_SNN_V1_Flexible_Spiking": Hybrid_NSN_SNN_V1_Flexible_Spiking
 }
 
 # TO REMOVE/ADD LOGIC TO MAKE WORK -- right now only cross_entropy is correct
@@ -44,12 +50,17 @@ def objective(
     recurrent_setting: bool,
     wandb_project_name: str,
     loss_type: str,
-    sampler_type: str
+    sampler_type: str,
+    local_checkpoint_dir: str, # NEW ARGUMENT: Directory for local checkpoints
+    percent_snn: float = None,
+    gamma_init_type: str = None,
+    gamma_fixed: bool = None,
+    reset_nsn: bool = None,
 ):
     """
     Objective function for Optuna hyperparameter optimization.
     """
-    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "Adamax"])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam"])
     # Conditional hyperparameter suggestion based on optimizer
     if optimizer_name == "Adam":
         # learning_rate = trial.suggest_float("adam_lr", 1e-4, 2e-3, log=False)
@@ -66,15 +77,13 @@ def objective(
             learning_rate = trial.suggest_float("adamax_lr", 1e-3, 1e-3, log=False)
         momentum = 0.0
     
-    if model_name_str != "ANN_with_LIF_output":
-        # Zenke regularization specific hyperparameters
+    if model_name_str not in ["ANN_with_LIF_output", "NSN_with_LIF_output"]:        # Zenke regularization specific hyperparameters
         l2_lower = trial.suggest_float("l2_lower", 100, 100, log=False)
         v2_lower = trial.suggest_float("v2_lower", 1e-3, 1e-3, log=False)
         l1_upper = trial.suggest_float("l1_upper", 0.06, 0.06, log=False)
         v1_upper = trial.suggest_float("v1_upper", 0, 1000, log=False)
         l2_upper = trial.suggest_categorical("l2_upper", [0])
         v2_upper = trial.suggest_float("v2_upper", 0, 0, log=False)
-
         # Store Zenke config in a dict
         zenke_config = {
             "l2_lower": l2_lower,
@@ -84,14 +93,31 @@ def objective(
             "l2_upper": l2_upper,
             "v2_upper": v2_upper,
         }
-        spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 100.0, log=False)
+        spike_grad_scale = trial.suggest_float("spike_grad_scale", 10.0, 10.0, log=False)
         spike_fn = SurrGradSpike.apply
     else:
         zenke_config = None
         spike_grad_scale = None
         spike_fn = None
+    if model_name_str == "Hybrid_NSN_SNN_V1_Flexible_Spiking":
+        v1_upper = trial.suggest_float("v1_upper", 100, 1000, log=False)
+        
 
-    # Initialize wandb for this trial
+    if model_name_str == "ANN_with_LIF_output" : #To think about whether to apply this to the RNN models
+        gradient_clip_algorithm = "norm"
+        gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
+    elif (model_name_str == "Hybrid_NSN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_rec") and data_config['data_name'] == "randman":
+        gradient_clip_algorithm = "norm"
+        gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
+    else:
+        gradient_clip_algorithm = None
+        gradient_clip_val = None
+        
+    # if "Hybrid" in model_name_str:
+    #     # percent_snn = trial.suggest_float("percent_snn", 0, 1, log=False)
+    # # Initialize wandb for this trial
+    # else:
+    #     # percent_snn = None
     wandb.init(
         project=wandb_project_name,
         group=f"{model_name_str}_rec_{recurrent_setting}_{loss_type}",
@@ -122,7 +148,13 @@ def objective(
         "optimizer_name": optimizer_name,
         "spike_grad_scale": spike_grad_scale,
         "model_type": model_name_str,
-        "spike_fn": spike_fn
+        "spike_fn": spike_fn,
+        "gradient_clip_val": gradient_clip_val,
+        "gradient_clip_algorithm": gradient_clip_algorithm,
+        "percent_snn": percent_snn,
+        "gamma_fixed": gamma_fixed,
+        "gamma_init_type": gamma_init_type,
+        "reset_nsn": reset_nsn,
     }
 
     # if model_name_str in ["SNN", "Hybrid_RNN_SNN_rec", "Hybrid_RNN_SNN_V1_same_layer"]:
@@ -134,25 +166,46 @@ def objective(
     model = model_class(**model_args)
 
     model.to(device)
+
+    os.makedirs(local_checkpoint_dir, exist_ok=True)
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=local_checkpoint_dir, # UPDATED: Save checkpoints to the local directory
+        filename=f"{model_name_str}-trial_{trial.number}-best-{{epoch:02d}}-{{val_total_loss:.4f}}", # Added trial.number to filename
+        monitor="val_total_loss", # Metric to monitor
+        mode="min", # Minimize this metric
+        save_top_k=1, # Save only the best model
+        save_last=True, # Also save the last model
+        verbose=False # Set to True for more logging during checkpointing
+    )
+
     # After model instantiation, before training
     # print("Model expects input_features:", model.input_features)
     # print("Model w1 shape:", model.w1.shape)
 
-    # Get a batch from your train_loader to check input shape
+    # # Get a batch from your train_loader to check input shape
     # xb, yb = next(iter(train_loader))
     # print("Sample batch xb shape:", xb.shape)
     # print("Sample batch yb shape:", yb.shape)
-    # --- PyTorch Lightning Trainer Setup ---
-    trainer = pl.Trainer(
-        max_epochs=data_config["epochs"],
-        accelerator=str(device.type),
-        devices=1,
-        logger=pl.loggers.WandbLogger(log_model=True, project=wandb_project_name),
-        enable_checkpointing=False,
-        callbacks=[
+    # # --- PyTorch Lightning Trainer Setup ---
+    trainer_args = {
+        "max_epochs": data_config["epochs"],
+        "accelerator": str(device.type),
+        "devices": 1,
+        "logger": pl.loggers.WandbLogger(log_model=True, project=wandb_project_name),
+        "enable_checkpointing": True,
+        "callbacks": [
             optuna.integration.PyTorchLightningPruningCallback(trial, monitor="val_total_loss"),
+            checkpoint_callback,
         ],
-    )
+    }
+
+    # Conditionally add gradient clipping arguments
+    if gradient_clip_val is not None:
+        trainer_args["gradient_clip_val"] = gradient_clip_val
+        trainer_args["gradient_clip_algorithm"] = "norm"
+
+    trainer = pl.Trainer(**trainer_args)
 
     # --- Training ---
     try:
@@ -220,4 +273,13 @@ def objective(
     wandb.log({"final_val_total_loss": val_total_loss})
     wandb.finish()
 
-    return val_total_loss
+    best_checkpoint_path = checkpoint_callback.best_model_path
+    if best_checkpoint_path is None:
+        print("Warning: No best model checkpoint was saved. This might happen if training was pruned early.")
+        # Fallback: if no best model was saved, return the path to the last saved checkpoint if it exists
+        if hasattr(trainer, 'checkpoint_callback') and trainer.checkpoint_callback.last_model_path:
+            best_checkpoint_path = trainer.checkpoint_callback.last_model_path
+        else:
+            best_checkpoint_path = "N/A" # Indicate no path found
+
+    return val_total_loss, best_checkpoint_path

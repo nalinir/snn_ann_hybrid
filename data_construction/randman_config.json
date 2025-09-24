@@ -1,12 +1,14 @@
 {
-    "nb_inputs": 100,
-    "nb_hidden": 4,
-    "nb_outputs": 2,
+    "data_name": "randman",
+    "nb_hidden": 20,
     "time_step": 0.001,
-    "epochs": 100,
-    "nb_steps": 100,
+    "epochs": 500,
     "tau_mem": 0.01,
     "tau_syn": 0.005,
-    "tau_readout": 0.02
+    "tau_readout": 0.02,
+    "noise": false,
+    "percent_data": 1.0,
+    "batch_size": 516,
+    "nb_inputs": 3
   }
   

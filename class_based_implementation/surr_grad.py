@@ -23,4 +23,3 @@ class SurrGradSpike(torch.autograd.Function):
         grad_input = grad_output.clone()
         grad = grad_input / (ctx.scale * torch.abs(input) + 1.0) ** 2
         return grad, None # Return None for the scale gradient as it's not a learnable parameter here
-
