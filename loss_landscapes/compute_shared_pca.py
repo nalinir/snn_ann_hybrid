@@ -10,7 +10,7 @@ import sys
 sys.path.append("/scratch/nar8991/snn/snn_ann_hybrid")
 from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer
 from class_based_implementation.surr_grad import SurrGradSpike
-from loss_landscapes.utils import get_shd_train_data, get_randman_data, _flatten_params
+from loss_landscapes.utils import get_shd_train_data, get_randman_train_data, _flatten_params
 
 MODEL_CLASSES = {
     "NSN_with_LIF_output": NSN_with_LIF_output,
@@ -37,11 +37,11 @@ def compute_shared_pca(models):
     return d1, d2
 
 def get_all_models(data):
-    if data == 'randman':
-        BASE_PATH="/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman/1_d/2_classes/3/cross_entropy"
+    if data == 'randman': # TO DO - Allow for all randman problems eventually 
+        BASE_PATH="/vast/nar8991/snn/training_results/randman/1_d/2_classes/3/cross_entropy"
         hidden_neurons = 20
     elif data == 'shd':
-        BASE_PATH="/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/shd/None_d/20_classes/700/cross_entropy"
+        BASE_PATH="/vast/nar8991/snn/training_results/shd/None_d/20_classes/700/cross_entropy"
         hidden_neurons = 256
     
     all_models = []
@@ -49,8 +49,8 @@ def get_all_models(data):
         percent_list = [0.25, 0.5, 0.75] if 'Hybrid' in model_name else [None]
         for percent in percent_list:
             for seed in range(1, 5):
-                base_path = f"{BASE_PATH}/{model_name}/recurrent_True/seed_{seed}/grid_sampler/{hidden_neurons}_hidden/1.0_pct_data"
-                model_path_suffix = f"{percent}_percent_snn/best_model_of_study.ckpt" if percent else "best_model_of_study.ckpt"
+                base_path = f"{BASE_PATH}/{model_name}/recurrent_True/seed_{seed}/tpe_sampler/{hidden_neurons}_hidden/1.0_pct_data"
+                model_path_suffix = f"{percent}_percent_snn/best_model_of_study.ckpt" # if percent else "best_model_of_study.ckpt"
                 model_file_path = f"{base_path}/{model_path_suffix}"
                 if os.path.exists(model_file_path):
                     model = model_class.load_from_checkpoint(model_file_path)

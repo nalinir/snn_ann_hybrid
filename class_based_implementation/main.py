@@ -8,6 +8,7 @@ import io
 import os
 import pickle
 import pytorch_lightning as pl
+import pandas as pd
 
 from maren_data.helpers import choose_data_params
 # from data_construction.nmnist_dataset import data_split_nmnist
@@ -76,7 +77,7 @@ def arg_parser():
     parser.add_argument(
         "--loss_type",
         type=str,
-        default="mse",
+        default="cross_entropy",
         choices=list(LOSS_FUNCTIONS.keys()),
         help="Loss function type: " + ", ".join(LOSS_FUNCTIONS.keys()),
     )
@@ -123,6 +124,19 @@ def arg_parser():
         action="store_false",
         help="If set, NSN neurons will NOT reset after firing (default: True for NSN models)"
     )
+    parser.add_argument(
+        "--percent_snn",
+        type=float,
+        nargs="+",  # Accept one or more values
+        default=None,
+        help="Percent of neurons that should be spiking (for hybrid models). Can specify multiple values like --percent_snn 0.25 0.5 0.75"
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=3,
+        help="Alpha parameter for Randman dataset (optional)"
+    )
     return parser.parse_args()
 
 def run_optuna_study(
@@ -153,15 +167,27 @@ def run_optuna_study(
     print(
         f"Running optimization for model: {model_name}, recurrent={recurrent_setting}, {study_name_suffix}"
     )
+    study_db_filename = f"optuna_study.db"
+    study_db_path = os.path.join(local_checkpoint_dir_for_study, study_db_filename)
+    # Use 'sqlite:///' for an absolute path in the storage URL
+    storage_url = f"sqlite:///{study_db_path}"
+    print(f"Optuna study history stored at: {study_db_path}")
+    # ==========================================
 
     study = optuna.create_study(
         direction="minimize",
         pruner=optuna.pruners.MedianPruner(n_warmup_steps=5),
         study_name=f"model_search_{data_config['data_name']}_{loss_type}_{model_name}_seed_{seed}_{sampler_type}_{study_name_suffix}_{gamma_init_type}_{gamma_fixed}_{reset_nsn}",
-        sampler=sampler
+        sampler=sampler,
+        # === KEY PERSISTENCE PARAMETERS ===
+        storage=storage_url,         # Use a persistent storage backend
+        load_if_exists=True          # Load the existing study if the file is found
+        # ==================================
     )
 
     # List to store (trial_value, checkpoint_path) for each trial
+    # NOTE: This list now ONLY stores results from the CURRENT script invocation.
+    # The full history is in the study object via the storage.
     trial_results = []
 
     def wrapped_objective_with_args(trial):
@@ -184,22 +210,33 @@ def run_optuna_study(
             gamma_fixed=gamma_fixed,
             reset_nsn=reset_nsn
         )
+        trial.set_user_attr("best_checkpoint_path", best_checkpoint_path)
+
         trial_results.append((loss, best_checkpoint_path)) # Store the result
         return loss # Optuna optimizes based on the first returned value
 
-    study.optimize(wrapped_objective_with_args, n_trials=n_trials)
 
-    # --- Log Best Checkpoint Path for the Study ---
-    best_trial = study.best_trial
-    best_loss = best_trial.value
-
-    # Find the corresponding checkpoint path for the best trial
-    best_checkpoint_for_study = "N/A"
-    for loss, path in trial_results:
-        if loss == best_loss: # This assumes unique best loss, or picks first if multiple
-            best_checkpoint_for_study = path
-            break
+    if isinstance(sampler, optuna.samplers.GridSampler):
+        completed_trials_count = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+        if completed_trials_count >= n_trials:
+            print(f"Grid Search is complete ({completed_trials_count}/{n_trials} trials). Skipping optimization.")
+        else:
+            print(f"Resuming/Starting Grid Search. Completed trials: {completed_trials_count}/{n_trials}.")
+            study.optimize(wrapped_objective_with_args, n_trials=n_trials)
+    else:
+        study.optimize(wrapped_objective_with_args, n_trials=n_trials)    # --- Log Best Checkpoint Path for the Study ---
     
+    if not study.trials:
+        print("Warning: No trials found in the study history. Cannot set best model symlink.")
+        return
+        
+    best_trial = study.best_trial # Retrieves the best trial from the entire loaded study history
+    best_loss = best_trial.value
+    
+    # Retrieve the checkpoint path stored in the user attributes
+    best_checkpoint_for_study = best_trial.user_attrs.get("best_checkpoint_path", "N/A (Attribute Missing)")
+
+
     # NEW: Create a standardized symbolic link to the best model
     standard_symlink_filename = "best_model_of_study.ckpt"
     standard_symlink_full_path = os.path.join(local_checkpoint_dir_for_study, standard_symlink_filename)
@@ -251,9 +288,9 @@ def run_optuna_study(
 def main():
     global models_to_run
     args = arg_parser()
-    data, dim_manifold, n_trials, loss_type, sampler_type, sweep_seed, num_workers, chosen_model, no_non_recurrent, nb_hidden, percent_data, gamma_init_type, gamma_fixed, reset_nsn = (
+    data, dim_manifold, n_trials, loss_type, sampler_type, sweep_seed, num_workers, chosen_model, no_non_recurrent, nb_hidden, percent_data, gamma_init_type, gamma_fixed, reset_nsn, percent_snn_arg, alpha = (
         args.data, args.dim_manifold, args.n_trials, args.loss_type, args.sampler_type, args.sweep_seed, args.num_workers, args.chosen_model, args.no_non_recurrent, args.nb_hidden, args.percent_data,
-        args.gamma_init_type, args.gamma_fixed, args.reset_nsn
+        args.gamma_init_type, args.gamma_fixed, args.reset_nsn, args.percent_snn, args.alpha
     )
     num_classes = args.num_classes
     if chosen_model is not None:
@@ -290,8 +327,10 @@ def main():
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
+    alpha_dir = f"_alpha_{alpha}" if alpha != 3 else ""
+
     save_dir_base = (
-        f"/vast/nar8991/snn/training_results/{data}/{dim_manifold}_d/{num_classes}_classes/{data_config['nb_inputs']}"
+        f"/vast/nar8991/snn/training_results/{data}/{dim_manifold}_d/{num_classes}_classes/{data_config['nb_inputs']}{alpha_dir}"
     )
     os.makedirs(save_dir_base, exist_ok=True)
     save_dir = os.path.join(save_dir_base, loss_type)
@@ -314,11 +353,11 @@ def main():
             "adam_lr": [1e-3], # SNN default - only SNN now
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
-            "l2_lower": [15], #use SHD paper instead
+            "l2_lower": [100], #use SHD paper instead
             "v2_lower": [0.001],
             "l1_upper": [0.06],
-            # "v1_upper": [15, 100],
-            "v1_upper": [15],            
+            "v1_upper": [100, 15],
+            # "v1_upper": [100],            
             "l2_upper": [0],
             "v2_upper": [0],
             "spike_grad_scale": [10],
@@ -334,18 +373,36 @@ def main():
             search_space_grid_and_tpe_params['v2_upper'] = [None]
             search_space_grid_and_tpe_params['spike_grad_scale'] = [None] # No spike grad scale for ANN
             search_space_grid_and_tpe_params['zenke_enabled'] = [None] # No zenke enabled for ANN
-            search_space_grid_and_tpe_params['adam_lr'] = [2e-4]
-        elif models_to_run == ["Hybrid_RNN_SNN_V1_same_layer"] or models_to_run == ["Hybrid_NSN_SNN_V1_same_layer"]:
-            search_space_grid_and_tpe_params['adam_lr'] = [5e-4]       
-        elif models_to_run == ["Hybrid_RNN_SNN_rec"] or models_to_run == ["Hybrid_NSN_SNN_rec"]:
-            search_space_grid_and_tpe_params['adam_lr'] = [1e-3]
-        if nb_hidden or percent_data:
-            search_space_grid_and_tpe_params['v1_upper'] = [100] # Reduces final number of sweeps a bit
+            search_space_grid_and_tpe_params['adam_lr'] = [1e-4, 2e-4, 5e-4, 1e-3]
+        elif models_to_run == ["Hybrid_NSN_SNN_V1_same_layer"]:
+            search_space_grid_and_tpe_params['adam_lr'] = [2e-4, 5e-4, 1e-3]       
+        elif models_to_run == ["Hybrid_RNN_SNN_rec"] or models_to_run == ["Hybrid_NSN_SNN_rec"] or models_to_run == ["Hybrid_RNN_SNN_V1_same_layer"]:
+            search_space_grid_and_tpe_params['adam_lr'] = [2e-4, 5e-4, 1e-3]
+        # if nb_hidden or percent_data:
+        #     search_space_grid_and_tpe_params['v1_upper'] = [100, 15] # Reduces final number of sweeps a bit
     elif data == "randman":
+        # Add alpha to argparser and use it here
+
+        # Path to metadata CSV
+        meta_data_path = "/scratch/nar8991/snn/DarwinNeuron/data/randman/meta-data.csv"
+        randman_dir = "/scratch/nar8991/snn/DarwinNeuron/data/randman"
+
+        # Read metadata and select randman_id based on dim_manifold, num_classes, and alpha
+        meta_df = pd.read_csv(meta_data_path)
+        # Filter by dim_manifold and nb_classes
+        filtered = meta_df[(meta_df["dim_manifold"] == dim_manifold) & (meta_df["nb_classes"] == num_classes)]
+
+        if alpha is not None:
+            filtered = filtered[filtered["alpha"] == alpha]
+        if filtered.empty:
+            raise ValueError(f"No randman dataset found for dim_manifold={dim_manifold}, num_classes={num_classes}, alpha={alpha}")
+        randman_id = int(filtered.iloc[0]["id"])
+
         data_loader_config = {
-            'randman_id': 0,
-            'randman_dir': '/scratch/nar8991/snn/DarwinNeuron/data/randman'
+            'randman_id': randman_id,
+            'randman_dir': randman_dir
         }
+        data_loader_config['randman_dir'] = '/scratch/nar8991/snn/DarwinNeuron/data/randman'
         randman = RandmanConfig.lookup_by_id(data_loader_config['randman_id'], os.path.join(data_loader_config['randman_dir'], "meta-data.csv"))
         dataset = randman.read_dataset(data_loader_config['randman_dir'])
         train_loader, val_loader = split_and_load(dataset, batch_size=data_config["batch_size"])
@@ -424,19 +481,21 @@ def main():
         #     percent_snn = [0.75]
         if "Hybrid" in model_name and "Flexible" not in model_name:
             # These models can use percent SNN
-            percent_snn = [0.9, 0.85, 0.8, 0.75, 0.5, 0.25] 
+            if percent_snn_arg is not None:
+                percent_snn = percent_snn_arg
+            else:
+                percent_snn = [0.95, 0.9, 0.85, 0.8, 0.75, 0.5, 0.25] 
         else:
             percent_snn = [None]
 
         for recurrent_setting in allowed_recurrents:
             extra_gamma_dir = []
             # REVISIT BASED ON FINDINGS
-            # if "NSN" in model_name or model_name == "Hybrid_NSN_SNN_V1_Flexible_Spiking":
-            #     extra_gamma_dir.append(f"reset_nsn_{reset_nsn}")
             if model_name == "Hybrid_NSN_SNN_V1_Flexible_Spiking":
                 extra_gamma_dir = [f"{gamma_init_type}_gamma_init", f"gamma_fixed_{gamma_fixed}", f"reset_nsn_{reset_nsn}"]
+            elif "NSN" in model_name and reset_nsn == False:
+                extra_gamma_dir = [f"reset_nsn_{reset_nsn}"]
             for p_s in percent_snn:
-
                 # First -> % data normal, nb hidden reduced
                 # This should probably be removed from the config eventually but don't worry for now...
                 if nb_hidden:

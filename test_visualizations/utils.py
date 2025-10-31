@@ -3,6 +3,7 @@ import torch
 import sys
 import os
 from tqdm import tqdm
+import pandas as pd
 
 from maren_data.helpers import choose_data_params
 
@@ -30,8 +31,31 @@ def get_shd_test_data():
         )
     return test_loader
 
-def get_randman_test_data():
-    data_loader_config = {'randman_id': 0, 'randman_dir': '/scratch/nar8991/snn/DarwinNeuron/data/randman'}
+def get_randman_config(num_dim, num_classes, alpha=None):
+    meta_data_path = "/scratch/nar8991/snn/DarwinNeuron/data/randman/meta-data.csv"
+    randman_dir = "/scratch/nar8991/snn/DarwinNeuron/data/randman"
+
+    # Read metadata and select randman_id based on dim_manifold, num_classes, and alpha
+    meta_df = pd.read_csv(meta_data_path)
+    # Filter by dim_manifold and nb_classes
+    filtered = meta_df[(meta_df["dim_manifold"] == num_dim) & (meta_df["nb_classes"] == num_classes)]
+
+    if alpha is not None:
+        filtered = filtered[filtered["alpha"] == alpha]
+    if filtered.empty:
+        raise ValueError(f"No randman dataset found for dim_manifold={num_dim}, num_classes={num_classes}, alpha={alpha}")
+    randman_id = int(filtered.iloc[0]["id"])
+
+    data_loader_config = {
+        'randman_id': randman_id,
+        'randman_dir': randman_dir
+    }
+
+    return data_loader_config
+
+
+def get_randman_test_data(num_dim=2, num_classes=2, alpha=3):
+    data_loader_config = get_randman_config(num_dim=num_dim, num_classes=num_classes, alpha=alpha)
     batch_size=516
     randman = RandmanConfig.lookup_by_id(data_loader_config['randman_id'], os.path.join(data_loader_config['randman_dir'], "meta-data.csv"))
     dataset = randman.read_dataset(data_loader_config['randman_dir'])

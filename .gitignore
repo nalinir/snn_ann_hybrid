@@ -175,8 +175,7 @@ cython_debug/
 
 # Ignore all files in the data directory
 data/* 
-maren_data/data/*
-maren_data/700data/*
+maren_data/shd/*
 
 # and wandb directory
 wandb/*

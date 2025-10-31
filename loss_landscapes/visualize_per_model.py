@@ -7,19 +7,22 @@ import argparse
 import os
 
 sys.path.append("/scratch/nar8991/snn/snn_ann_hybrid")
-from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer
-from loss_landscapes.utils import get_shd_train_data, get_randman_data, _flatten_params, _unflatten_params, _assign_flat_params
+from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer, Hybrid_NSN_SNN_V1_Flexible_Spiking
+from class_based_implementation.train_model import objective, MODEL_CLASSES, LOSS_FUNCTIONS # Import mappings too
 
-MODEL_CLASSES = {
-    "NSN_with_LIF_output": NSN_with_LIF_output, "SNN": SNN, "ANN_with_LIF_output": ANN_with_LIF_output,
-    "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec, "Hybrid_NSN_SNN_rec": Hybrid_NSN_SNN_rec,
-    "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer, "Hybrid_NSN_SNN_V1_same_layer": Hybrid_NSN_SNN_V1_same_layer,
-}
+from loss_landscapes.utils import get_shd_train_data, get_randman_train_data, _flatten_params, _unflatten_params, _assign_flat_params
+
+# MODEL_CLASSES = {
+#     "NSN_with_LIF_output": NSN_with_LIF_output, "SNN": SNN, "ANN_with_LIF_output": ANN_with_LIF_output,
+#     "Hybrid_RNN_SNN_rec": Hybrid_RNN_SNN_rec, "Hybrid_NSN_SNN_rec": Hybrid_NSN_SNN_rec,
+#     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer, "Hybrid_NSN_SNN_V1_same_layer": Hybrid_NSN_SNN_V1_same_layer,
+
+# }
 
 
 def get_dataloader(data):
     if data == 'randman':
-        return get_randman_data()
+        return get_randman_train_data()
     elif data == 'shd':
         return get_shd_train_data()
 
@@ -29,11 +32,16 @@ def visualize_loss_landscape(model, dataloader, d1, d2,
                              device="cuda",
                              resolution=21,
                              range_lim=1.0,
-                             save_prefix=None, BASE_PATH=None):
-    # ... (same as your original function) ...
-    # ... (the implementation is identical to the provided function) ...
+                             save_prefix=None, BASE_PATH=None,
+                             exclude_gamma=True):
     model.to(device).eval()
-    params = list(model.parameters())
+    
+    # Filter out gamma parameters if requested
+    if exclude_gamma:
+        params = [p for name, p in model.named_parameters() if 'gamma' not in name.lower()]
+        print(f"Excluding gamma parameters. Using {len(params)} parameters for visualization.")
+    else:
+        params = list(model.parameters())
     base_vec, shapes = _flatten_params(params)
     base_vec = base_vec.to(device)
     alphas = np.linspace(-range_lim, range_lim, resolution)
@@ -77,15 +85,20 @@ if __name__ == '__main__':
     parser.add_argument('--recurrent', type=str, required=True)
     parser.add_argument('--percent', type=str, default="None")
     parser.add_argument('--seed', type=int, required=True)
+    parser.add_argument('--sampler_type', type=str, default="grid")
+    parser.add_argument('--gamma_init_type', type=str, default="rand", choices=["rand", "const_zero", "const_one", "const_half"])
+    parser.add_argument('--gamma_fixed', action='store_true', help="If set, gamma was fixed during training")
+    parser.add_argument('--no_reset_nsn', dest='reset_nsn', action='store_false', help="If set, NSN neurons do NOT reset after firing")
+
     args = parser.parse_args()
 
     # Get data and correct base path
     dataloader = get_dataloader(args.data)
     if args.data == 'randman':
-        BASE_PATH = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman/1_d/2_classes/3/cross_entropy"
+        BASE_PATH = "/vast/nar8991/snn/training_results/randman/1_d/2_classes/3/cross_entropy"
         hidden_neurons = 20
     elif args.data == 'shd':
-        BASE_PATH = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/shd/None_d/20_classes/700/cross_entropy"
+        BASE_PATH = "/vast/nar8991/snn/training_results/shd/None_d/20_classes/700/cross_entropy"
         hidden_neurons = 256
     
     # Load PCA directions
@@ -99,11 +112,24 @@ if __name__ == '__main__':
     # Load the specific model for this task
     model_class = MODEL_CLASSES.get(args.model_name)
     percent = float(args.percent) if args.percent != "None" else None
-    
-    base_path = f"{BASE_PATH}/{args.model_name}/recurrent_True/seed_{args.seed}/grid_sampler/{hidden_neurons}_hidden/1.0_pct_data"
-    model_path_suffix = f"{percent}_percent_snn/best_model_of_study.ckpt" if percent else "best_model_of_study.ckpt"
-    model_file_path = f"{base_path}/{model_path_suffix}"
-    
+    base_path = f"{BASE_PATH}/{args.model_name}/recurrent_{args.recurrent}/seed_{args.seed}/{args.sampler_type}_sampler/{hidden_neurons}_hidden/1.0_pct_data"
+
+    percent_str = f"{percent}_percent_snn" if percent else "None_percent_snn"
+    extra_dirs = []
+    extra_dirs.append(percent_str)
+
+    # Add model-specific directories
+    if args.model_name == "Hybrid_NSN_SNN_V1_Flexible_Spiking":
+        extra_dirs.extend([
+            f"{args.gamma_init_type}_gamma_init",
+            f"gamma_fixed_{args.gamma_fixed}"
+        ])
+        if not args.reset_nsn:
+            extra_dirs.append(f"reset_nsn_{args.reset_nsn}")
+    elif "NSN" in args.model_name and not args.reset_nsn:
+        extra_dirs.append("reset_nsn_False")
+
+    model_file_path = f"{base_path}/{'/'.join(extra_dirs)}/best_model_of_study.ckpt" if extra_dirs else f"{base_path}/best_model_of_study.ckpt"
     if not os.path.exists(model_file_path):
         print(f"Model file not found for visualization: {model_file_path}")
         exit()
@@ -112,7 +138,7 @@ if __name__ == '__main__':
     model = model_class.load_from_checkpoint(model_file_path)
 
     # Visualize the loss landscape
-    save_prefix = f"{args.model_name}_seed{args.seed}_percent{percent}"
+    save_prefix = f"{args.model_name}_seed{args.seed}_percent{percent}_reset_nsn{args.reset_nsn}"
     visualize_loss_landscape(
         model, dataloader, d1, d2,
         criterion=torch.nn.CrossEntropyLoss(),

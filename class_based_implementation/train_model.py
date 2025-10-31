@@ -14,7 +14,7 @@ import os
 # from class_based_implementation.snn_hybrid_models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, SurrGradSpike
 
 # Streamlined 
-from class_based_implementation.models import SNN, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer, Hybrid_NSN_SNN_V1_Flexible_Spiking
+from class_based_implementation.models import SNN, SNN_2_Layer, ANN_with_LIF_output, Hybrid_RNN_SNN_rec, Hybrid_RNN_SNN_V1_same_layer, NSN_with_LIF_output, Hybrid_NSN_SNN_rec, Hybrid_NSN_SNN_V1_same_layer, Hybrid_NSN_SNN_V1_Flexible_Spiking
 from class_based_implementation.surr_grad import SurrGradSpike
 
 from old_implementation.loss_landscape import visualize_loss_landscape_3d
@@ -28,7 +28,8 @@ MODEL_CLASSES = {
     "Hybrid_NSN_SNN_rec": Hybrid_NSN_SNN_rec,
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer,
     "Hybrid_NSN_SNN_V1_same_layer": Hybrid_NSN_SNN_V1_same_layer,
-    "Hybrid_NSN_SNN_V1_Flexible_Spiking": Hybrid_NSN_SNN_V1_Flexible_Spiking
+    "Hybrid_NSN_SNN_V1_Flexible_Spiking": Hybrid_NSN_SNN_V1_Flexible_Spiking,
+    "SNN_2_Layer": SNN_2_Layer,
 }
 
 # TO REMOVE/ADD LOGIC TO MAKE WORK -- right now only cross_entropy is correct
@@ -282,4 +283,9 @@ def objective(
         else:
             best_checkpoint_path = "N/A" # Indicate no path found
 
+    # ==========================================================
+    # 🌟 CRITICAL NEW LINE FOR PERSISTENCE AND SYMLINK RETRIEVAL 🌟
+    # Store the path in the Optuna trial's metadata
+    trial.set_user_attr("best_checkpoint_path", best_checkpoint_path)
+    # ==========================================================
     return val_total_loss, best_checkpoint_path

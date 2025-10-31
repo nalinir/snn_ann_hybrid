@@ -14,11 +14,10 @@ from class_based_implementation.surr_grad import SurrGradSpike
 from maren_data.helpers import choose_data_params
 sys.path.append("/scratch/nar8991/snn/DarwinNeuron")
 from src.RandmanFunctions import RandmanConfig, split_and_load, split_test_and_load
-from loss_landscapes.utils import get_shd_train_data, get_randman_data
+from loss_landscapes.utils import get_shd_train_data, get_randman_train_data
 
 
 def compute_sam_sharpness(model, dataloader, rho=0.05, device='cuda'):
-    # ... (same as your original function) ...
     model.to(device)
     model.zero_grad()
     criterion = nn.CrossEntropyLoss()
@@ -64,10 +63,10 @@ MODEL_CLASSES = {
 def calculate_single_sam_sharpness(data, model_name, recurrent, percent, seed, rho):
     if data == 'randman':
         BASE_PATH = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman/1_d/2_classes/3/cross_entropy"
-        train_loader = get_randman_data()
+        train_loader = get_randman_train_data()
         hidden_neurons = 20
     elif data == 'shd':
-        BASE_PATH = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/shd/None_d/20_classes/700/cross_entropy"
+        BASE_PATH = "/vast/nar8991/snn/training_results/shd/None_d/20_classes/700/cross_entropy"
         train_loader = get_shd_train_data()
         hidden_neurons = 256
     
