@@ -1,0 +1,16 @@
+{
+    "data_name": "shd",
+    "nb_inputs": 700,
+    "nb_hidden": 256,
+    "nb_outputs": 20,
+    "time_step": 0.002,
+    "max_time": 1.0,
+    "tau_mem": 0.01,
+    "tau_syn": 0.005,
+    "tau_readout": 0.02,
+    "batch_size": 256,
+    "epochs": 200,
+    "noise": false,
+    "percent_data": 1.0
+  }
+  
