@@ -60,7 +60,7 @@ MODEL_CLASSES = {
     "Hybrid_RNN_SNN_V1_same_layer": Hybrid_RNN_SNN_V1_same_layer, "Hybrid_NSN_SNN_V1_same_layer": Hybrid_NSN_SNN_V1_same_layer,
 }
 
-def calculate_single_sam_sharpness(data, model_name, recurrent, percent, seed, rho):
+def calculate_single_sam_sharpness(data, model_name, recurrent, percent, seed, rho, nsn_reset=True):
     if data == 'randman':
         BASE_PATH = "/scratch/nar8991/snn/snn_ann_hybrid/optuna_results/randman/1_d/2_classes/3/cross_entropy"
         train_loader = get_randman_train_data()
@@ -75,12 +75,15 @@ def calculate_single_sam_sharpness(data, model_name, recurrent, percent, seed, r
         print(f"Model class for {model_name} not found.")
         return
 
-    if percent is not None:
-        model_path_suffix = f"{percent}_percent_snn/best_model_of_study.ckpt"
+    # if percent is not None:
+    if nsn_reset:
+        model_path_suffix = f"/best_model_of_study.ckpt"
     else:
-        model_path_suffix = "best_model_of_study.ckpt"
+        model_path_suffix = f"/reset_nsn_False/best_model_of_study.ckpt"
+    # else:
+    #     model_path_suffix = "best_model_of_study.ckpt"
     
-    base_path = f"{BASE_PATH}/{model_name}/recurrent_{recurrent}/seed_{seed}/grid_sampler/{hidden_neurons}_hidden/1.0_pct_data"
+    base_path = f"{BASE_PATH}/{model_name}/recurrent_{recurrent}/seed_{seed}/grid_sampler/{hidden_neurons}_hidden/1.0_pct_data/{percent}_percent_snn"
     model_file_path = f"{base_path}/{model_path_suffix}"
 
     if not os.path.exists(model_file_path):
@@ -97,7 +100,7 @@ def calculate_single_sam_sharpness(data, model_name, recurrent, percent, seed, r
     }
     df = pd.DataFrame(result_data)
     
-    output_dir = "/scratch/nar8991/snn/output/sam_results_csv_final"
+    output_dir = "/vast/nar8991/snn/output/sam_results_csv_final"
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, f"sam_result_{os.environ['SLURM_ARRAY_TASK_ID']}.csv")
     if os.path.exists(output_file):
@@ -115,9 +118,12 @@ if __name__ == '__main__':
     parser.add_argument('--percent', type=str, default="None")
     parser.add_argument('--seed', type=int, required=True)
     parser.add_argument('--rho', type=float, required=True)
+    parser.add_argument('--no_nsn_reset', dest='nsn_reset', action='store_false', help="If set, NSN neurons do NOT reset after firing")
     args = parser.parse_args()
     if args.percent == "None":
         args.percent = None
     else:
         args.percent = float(args.percent)
-    calculate_single_sam_sharpness(args.data, args.model_name, args.recurrent, args.percent, args.seed, args.rho)
+    calculate_single_sam_sharpness(args.data, args.model_name, args.recurrent, args.percent, args.seed, args.rho, nsn_reset=args.nsn_reset)
+
+

@@ -33,9 +33,21 @@ def visualize_loss_landscape(model, dataloader, d1, d2,
                              resolution=21,
                              range_lim=1.0,
                              save_prefix=None, BASE_PATH=None,
-                             exclude_gamma=True):
-    model.to(device).eval()
-    
+                             exclude_gamma=True, preload_data_to_device=True, use_amp=True, ymax=None):
+    # Require GPU device here (caller should have ensured CUDA availability).
+    try:
+        model.to(device)
+    except Exception as e:
+        print("ERROR: failed to move model to device:", device)
+        print("Exception during device init:", repr(e))
+        print("Diagnostics:")
+        print("  - CUDA_VISIBLE_DEVICES=", os.environ.get("CUDA_VISIBLE_DEVICES"))
+        print("  - If using GREENE_GPU_MPS or other MPS env vars, try unsetting them (e.g. unset GREENE_GPU_MPS).")
+        print("  - Ensure the job has an allocated GPU and the CUDA/MPS daemon is available.")
+        # exit non-zero so SLURM logs show clear failure
+        sys.exit(1)
+    model.eval()
+
     # Filter out gamma parameters if requested
     if exclude_gamma:
         params = [p for name, p in model.named_parameters() if 'gamma' not in name.lower()]
@@ -44,37 +56,71 @@ def visualize_loss_landscape(model, dataloader, d1, d2,
         params = list(model.parameters())
     base_vec, shapes = _flatten_params(params)
     base_vec = base_vec.to(device)
+
     alphas = np.linspace(-range_lim, range_lim, resolution)
     betas = np.linspace(-range_lim, range_lim, resolution)
     loss_grid = np.zeros((resolution, resolution), dtype=np.float32)
-    for i, a in enumerate(tqdm(alphas, desc="α")):
-        for j, b in enumerate(betas):
-            offset = (a * d1 + b * d2).to(device)
-            _assign_flat_params(params, base_vec + offset, shapes, device=device)
-            total_loss = 0.0
-            total_count = 0
-            for xb, yb in dataloader:
-                xb, yb = xb.to(device), yb.to(device)
-                outputs = model(xb)
-                if isinstance(outputs, tuple): outputs = outputs[0]
-                if outputs.dim() > 2: outputs, _ = torch.max(outputs, dim=1)
-                loss = criterion(outputs, yb)
-                total_loss += loss.item() * xb.size(0)
-                total_count += xb.size(0)
-            loss_grid[j, i] = total_loss / total_count
+
+    # Preload dataloader to device to avoid repeated host->device transfers
+    if preload_data_to_device:
+        data_on_device = []
+        for xb, yb in dataloader:
+            xb_dev = xb.to(device, non_blocking=True)
+            yb_dev = yb.to(device, non_blocking=True)
+            data_on_device.append((xb_dev, yb_dev))
+        dataloader = data_on_device
+
+    # Main evaluation loops: disable autograd
+    with torch.no_grad():
+        for i, a in enumerate(tqdm(alphas, desc="α")):
+            for j, b in enumerate(betas):
+                offset = (a * d1 + b * d2).to(device)
+                # assign new params (existing helper)
+                _assign_flat_params(params, base_vec + offset, shapes, device=device)
+
+                total_loss = 0.0
+                total_count = 0
+                # use AMP context (explicit) only if use_amp True
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    for xb, yb in dataloader:
+                        outputs = model(xb)
+                        if isinstance(outputs, tuple):
+                            outputs = outputs[0]
+                        if outputs.dim() > 2:
+                            outputs, _ = torch.max(outputs, dim=1)
+                        loss = criterion(outputs, yb)
+                        total_loss += float(loss.item()) * xb.size(0)
+                        total_count += xb.size(0)
+                loss_grid[j, i] = total_loss / total_count if total_count > 0 else float('nan')
+
+    # restore original params
     _assign_flat_params(params, base_vec, shapes, device=device)
+
     A, B = np.meshgrid(alphas, betas)
     fig3d = plt.figure(figsize=(6,5))
     ax3d = fig3d.add_subplot(111, projection="3d")
     surf = ax3d.plot_surface(A, B, loss_grid, cmap="viridis", edgecolor="none", alpha=0.9)
     ax3d.set_xlabel("α"); ax3d.set_ylabel("β"); ax3d.set_zlabel("Loss")
     ax3d.set_title(f"{save_prefix} - 3D Loss Surface")
+    # If a ymax is provided, set the beta (y) axis upper limit (keep lower bound = -range_lim)
+    if ymax is not None:
+        try:
+            ymin = 0
+            ax3d.set_ylim(ymin, float(ymax))
+        except Exception:
+            pass
     fig3d.colorbar(surf, shrink=0.6, aspect=10, label="Loss")
     if save_prefix: fig3d.savefig(f"{BASE_PATH}/{save_prefix}_3d.png", dpi=300, bbox_inches="tight")
     fig2d, ax2d = plt.subplots(figsize=(5,4))
     cs = ax2d.contour(alphas, betas, loss_grid, levels=30, cmap="viridis")
     fig2d.colorbar(cs, ax=ax2d, label="Loss")
     ax2d.set_xlabel("α"); ax2d.set_ylabel("β"); ax2d.set_title(f"{save_prefix} - 2D Loss Contour")
+    if ymax is not None:
+        try:
+            ymin = 0
+            ax2d.set_ylim(ymin, float(ymax))
+        except Exception:
+            pass
     if save_prefix: fig2d.savefig(f"{BASE_PATH}/{save_prefix}_2d.png", dpi=300, bbox_inches="tight")
     return fig3d, fig2d
 
@@ -89,8 +135,16 @@ if __name__ == '__main__':
     parser.add_argument('--gamma_init_type', type=str, default="rand", choices=["rand", "const_zero", "const_one", "const_half"])
     parser.add_argument('--gamma_fixed', action='store_true', help="If set, gamma was fixed during training")
     parser.add_argument('--no_reset_nsn', dest='reset_nsn', action='store_false', help="If set, NSN neurons do NOT reset after firing")
-
+    parser.add_argument('--range_lim', type=int, default=1)
+    parser.add_argument('--ymax', type=float, default=None, help="Optional upper limit for beta (y) axis on plots")
     args = parser.parse_args()
+
+    # require CUDA available and use it; fail early if not present
+    if not torch.cuda.is_available():
+        print("ERROR: CUDA not available. This script requires a GPU. Request a GPU and retry (e.g. sbatch with --gres=gpu).")
+        sys.exit(1)
+    runtime_device = "cuda"
+    print("Using device:", runtime_device)
 
     # Get data and correct base path
     dataloader = get_dataloader(args.data)
@@ -100,14 +154,15 @@ if __name__ == '__main__':
     elif args.data == 'shd':
         BASE_PATH = "/vast/nar8991/snn/training_results/shd/None_d/20_classes/700/cross_entropy"
         hidden_neurons = 256
-    
-    # Load PCA directions
+
+    # Load PCA directions and move them to the chosen runtime device (fallback if needed)
     pca_file = os.path.join(BASE_PATH, "pca_directions", "shared_pca_directions.pt")
     if not os.path.exists(pca_file):
         raise FileNotFoundError(f"PCA directions not found. Please run compute_pca.py first. File not found: {pca_file}")
-    pca_data = torch.load(pca_file)
-    d1 = pca_data["d1"].cuda()
-    d2 = pca_data["d2"].cuda()
+    # load PCA tensors directly onto the runtime device (GPU)
+    pca_data = torch.load(pca_file, map_location=runtime_device)
+    d1 = pca_data["d1"].to(runtime_device)
+    d2 = pca_data["d2"].to(runtime_device)
 
     # Load the specific model for this task
     model_class = MODEL_CLASSES.get(args.model_name)
@@ -133,15 +188,23 @@ if __name__ == '__main__':
     if not os.path.exists(model_file_path):
         print(f"Model file not found for visualization: {model_file_path}")
         exit()
-    
-    print(f"Loading model for visualization: {model_file_path}")
-    model = model_class.load_from_checkpoint(model_file_path)
 
-    # Visualize the loss landscape
+    print(f"Loading model for visualization: {model_file_path}")
+    # load checkpoint directly onto the runtime GPU to avoid device transfer issues
+    try:
+        model = model_class.load_from_checkpoint(model_file_path, map_location=runtime_device)
+    except Exception as e:
+        print("ERROR: failed to load checkpoint directly onto device:", runtime_device)
+        print("Exception:", repr(e))
+        print("Check that the checkpoint is valid and that the GPU environment is correctly configured.")
+        sys.exit(1)
+
+    # Visualize the loss landscape (pass explicit runtime device and disable AMP by default)
     save_prefix = f"{args.model_name}_seed{args.seed}_percent{percent}_reset_nsn{args.reset_nsn}"
     visualize_loss_landscape(
         model, dataloader, d1, d2,
         criterion=torch.nn.CrossEntropyLoss(),
-        device="cuda", resolution=21, range_lim=1,
-        save_prefix=save_prefix, BASE_PATH=BASE_PATH
+        device=runtime_device, resolution=21, range_lim=args.range_lim,
+        save_prefix=save_prefix, BASE_PATH=BASE_PATH,
+        use_amp=False, preload_data_to_device=True, ymax=args.ymax
     )

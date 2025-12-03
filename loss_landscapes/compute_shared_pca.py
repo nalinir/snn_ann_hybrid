@@ -46,17 +46,21 @@ def get_all_models(data):
     
     all_models = []
     for model_name, model_class in MODEL_CLASSES.items():
+        nsn_reset = [True, False] if 'NSN' in model_name else [True]
         percent_list = [0.25, 0.5, 0.75] if 'Hybrid' in model_name else [None]
         for percent in percent_list:
             for seed in range(1, 5):
-                base_path = f"{BASE_PATH}/{model_name}/recurrent_True/seed_{seed}/tpe_sampler/{hidden_neurons}_hidden/1.0_pct_data"
-                model_path_suffix = f"{percent}_percent_snn/best_model_of_study.ckpt" # if percent else "best_model_of_study.ckpt"
-                model_file_path = f"{base_path}/{model_path_suffix}"
-                if os.path.exists(model_file_path):
-                    model = model_class.load_from_checkpoint(model_file_path)
-                    all_models.append(model)
-                else:
-                    print("Model not found for loading: ", model_file_path)
+                for reset in nsn_reset:
+                    base_path = f"{BASE_PATH}/{model_name}/recurrent_True/seed_{seed}/tpe_sampler/{hidden_neurons}_hidden/1.0_pct_data/{percent}_percent_snn"
+                    if reset == True:
+                        model_file_path = os.path.join(base_path, 'best_model_of_study.ckpt')
+                    else:
+                        model_file_path = os.path.join(base_path, 'reset_nsn_False', 'best_model_of_study.ckpt')
+                    if os.path.exists(model_file_path):
+                        model = model_class.load_from_checkpoint(model_file_path)
+                        all_models.append(model)
+                    else:
+                        print("Model not found for loading: ", model_file_path)
     return all_models, BASE_PATH
 
 if __name__ == '__main__':

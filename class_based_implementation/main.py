@@ -1,3 +1,4 @@
+from html import parser
 import torch
 import json
 import argparse
@@ -102,10 +103,24 @@ def arg_parser():
         help="Sweep for nb_hidden sizes",
     )    # Add more arguments as needed for your specific use case
     parser.add_argument(
+            "--nb_hidden_list",
+            type=int,
+            nargs="+", # Accepts one or more values
+            default=None,
+            help="List of hidden neuron counts for the sweep (e.g., 256 128 64).",
+        )
+    parser.add_argument(
         "--percent_data",
         action="store_true",  # Set to True if the flag is present
         help="Sweep for percent_data sizes",
     )    # Add more arguments as needed for your specific use case
+    parser.add_argument(
+            "--percent_data_list",
+            type=float,
+            nargs="+", # Accepts one or more values
+            default=None,
+            help="List of data fractions for the sweep (e.g., 1.0 0.5 0.25).",
+        )
     parser.add_argument(
         "--gamma_init_type",
         type=str,
@@ -350,7 +365,7 @@ def main():
         data, settings, num_workers=num_workers,pre_path=pre_path_data
         )
         search_space_grid_and_tpe_params = {
-            "adam_lr": [1e-3], # SNN default - only SNN now
+            "adam_lr": [1e-4, 2e-4, 5e-4, 1e-3], # SNN default - only SNN now
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             # "momentum": [0, 0.5, 0.99], # Only relevant for SGD
             "l2_lower": [100], #use SHD paper instead
@@ -412,13 +427,13 @@ def main():
         nb_hidden_list = [20]
 
         search_space_grid_and_tpe_params = {
-            "adam_lr": [0.05],
+            "adam_lr": [1e-3, 1e-2, 5e-2, 1e-1], # SNN default - only SNN now
             "optimizer": ["Adam"], # For grid search, you can also add "adamw"
             "l2_lower": [100],
-            "v2_lower": [10e-3],
+            "v2_lower": [1e-3],
             # "l1_upper": [0.06],
-            "l1_upper": [1],
-            "v1_upper": [50],
+            "l1_upper": [1, 100],
+            "v1_upper": [15, 100],
             "l2_upper": [0],
             "v2_upper": [0],
             "zenke_enabled": [True],
@@ -436,18 +451,18 @@ def main():
             search_space_grid_and_tpe_params['v2_upper'] = [None]
             search_space_grid_and_tpe_params['spike_grad_scale'] = [None] # No spike grad scale for ANN
             search_space_grid_and_tpe_params['zenke_enabled'] = [None] # No zenke enabled for ANN
-            search_space_grid_and_tpe_params['adam_lr'] = [1e-3, 0.005]
-            search_space_grid_and_tpe_params['gradient_clip_val'] = [3.25, 3.75]
-        elif models_to_run == ["Hybrid_NSN_SNN_V1_same_layer"]:
-            search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 3, 4, 5]
-        elif models_to_run == ["Hybrid_RNN_SNN_V1_same_layer"]:
-            search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 4, 9]
-            search_space_grid_and_tpe_params['l1_upper'] = [1, 100]
-            search_space_grid_and_tpe_params['v1_upper'] = [50, 100]
-        elif models_to_run == ["Hybrid_RNN_SNN_rec"]:
-            search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 4, 5]
-            search_space_grid_and_tpe_params['l1_upper'] = [1, 100]
-            search_space_grid_and_tpe_params['v1_upper'] = [50, 100]
+            search_space_grid_and_tpe_params['adam_lr'] =  [1e-3, 1e-2, 5e-2, 1e-1]
+            # search_space_grid_and_tpe_params['gradient_clip_val'] = [3.25, 3.75]
+        # elif models_to_run == ["Hybrid_NSN_SNN_V1_same_layer"]:
+        #     # search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 3, 4, 5]
+        # elif models_to_run == ["Hybrid_RNN_SNN_V1_same_layer"]:
+        #     search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 4, 9]
+        #     search_space_grid_and_tpe_params['l1_upper'] = [1, 100]
+        #     search_space_grid_and_tpe_params['v1_upper'] = [50, 100]
+        # elif models_to_run == ["Hybrid_RNN_SNN_rec"]:
+        #     search_space_grid_and_tpe_params['gradient_clip_val'] = [1, 2, 4, 5]
+        #     search_space_grid_and_tpe_params['l1_upper'] = [1, 100]
+        #     search_space_grid_and_tpe_params['v1_upper'] = [50, 100]
     else:
         raise ValueError(f"Unsupported dataset: {data}. Supported datasets are: {list(data_loaders_map.keys())}")
 
@@ -470,6 +485,9 @@ def main():
         print("Using Bayesian Optimization (TPE).")
     pl.seed_everything(sweep_seed)  
 
+    nb_h_source_list = args.nb_hidden_list if args.nb_hidden_list is not None else nb_hidden_list[1:]
+    pct_d_source_list = args.percent_data_list if args.percent_data_list is not None else percent_data_list[1:]
+    
     # Main optimization loop
     for model_name in models_to_run:
 
@@ -501,7 +519,7 @@ def main():
                 if nb_hidden:
                     data_config['percent_data'] = percent_data_list[0]
                     # Do this logic so we don't have to run hypothesis 1 again - to adjust in the morning for the other sweep!
-                    for nb_h in nb_hidden_list[1:]: # Skip the first run
+                    for nb_h in nb_h_source_list: # Skip the first run
                         data_config['nb_hidden'] = nb_h
                         current_study_local_checkpoint_dir = os.path.join(
                             save_dir_base,
@@ -540,7 +558,7 @@ def main():
                         )
                 elif percent_data:
                     data_config['nb_hidden'] = nb_hidden_list[0]
-                    for p_d in percent_data_list[1:]: # Skip the first run (default)
+                    for p_d in pct_d_source_list: # Skip the first run (default)
                         data_config['percent_data'] = p_d
                         current_study_local_checkpoint_dir = os.path.join(
                             save_dir_base,

@@ -104,15 +104,18 @@ def objective(
         v1_upper = trial.suggest_float("v1_upper", 100, 1000, log=False)
         
 
-    if model_name_str == "ANN_with_LIF_output" : #To think about whether to apply this to the RNN models
-        gradient_clip_algorithm = "norm"
-        gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
-    elif (model_name_str == "Hybrid_NSN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_rec") and data_config['data_name'] == "randman":
-        gradient_clip_algorithm = "norm"
-        gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
-    else:
-        gradient_clip_algorithm = None
-        gradient_clip_val = None
+    # if model_name_str == "ANN_with_LIF_output" and data_config['data_name'] == "randman": #To think about whether to apply this to the RNN models
+    #     gradient_clip_algorithm = "norm"
+    #     gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
+    # elif (model_name_str == "Hybrid_NSN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_V1_same_layer" or model_name_str == "Hybrid_RNN_SNN_rec") and data_config['data_name'] == "randman":
+    #     gradient_clip_algorithm = "norm"
+    #     gradient_clip_val = trial.suggest_float("gradient_clip_val", 0, 10, log=False)
+    # else:
+    #     gradient_clip_algorithm = None
+    #     gradient_clip_val = None
+
+    gradient_clip_algorithm = None
+    gradient_clip_val = None
         
     # if "Hybrid" in model_name_str:
     #     # percent_snn = trial.suggest_float("percent_snn", 0, 1, log=False)
