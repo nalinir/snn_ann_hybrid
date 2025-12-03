@@ -11,4 +11,6 @@ Code for loss landscape visualizations (using a shared PCA for comparability) ar
 ## Data
 For comparability across models and lab-wide SNN projects for the Random Manifold Dataset (Zenke and Vogels 2021), we use a version of [this repository](https://github.com/Yixing-Wang/DarwinNeuron).
 
+To produce SHD data, you can use this [file](https://github.com/nalinir/snn_ann_hybrid/tree/main/data).
+
 
