@@ -174,8 +174,7 @@ cython_debug/
 .pypirc
 
 # Ignore all files in the data directory
-data/* 
-maren_data/shd/*
+data/shd/*
 
 # and wandb directory
 wandb/*
